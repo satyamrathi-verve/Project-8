@@ -42,3 +42,27 @@ When running on Windows, file names are checked against an access list to protec
  ✓ Compiled (967 modules)
  GET /masters/gl 200 in 4131ms
  ✓ Compiled in 8s (967 modules)
+ GET /masters/gl 200 in 3017ms
+ GET /masters/gl 200 in 294ms
+ GET /masters/gl 200 in 460ms
+ GET /masters/gl 200 in 340ms
+ GET /masters/gl 200 in 118ms
+ GET /masters/gl 200 in 1421ms
+ GET / 200 in 380ms
+ ✓ Compiled in 19.5s (510 modules)
+ ✓ Compiled in 3.1s (510 modules)
+ ✓ Compiled in 10.8s (976 modules)
+ GET /masters/gl 500 in 8325ms
+ GET /masters/gl 500 in 10781ms
+ ✓ Compiled in 5.1s (976 modules)
+ ✓ Compiled in 4.6s (976 modules)
+ GET /masters/gl 500 in 4636ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 14.5s (831 modules)
+ GET /masters/gl 404 in 859ms
+ GET /masters/gl 404 in 840ms
+ ✓ Compiled in 5.1s (831 modules)
+ ○ Compiling /masters/gl ...
+ ✓ Compiled /masters/gl in 5.1s (971 modules)
+ GET /masters/gl 200 in 4002ms
+ ✓ Compiled in 4.4s (982 modules)

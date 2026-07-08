@@ -78,3 +78,54 @@ Import trace for requested module:
 ./app/masters/gl/page.tsx
  ⚠ Fast Refresh had to perform a full reload due to a runtime error.
 <w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\Laptop On Rent 137\Project-8\.next\cache\webpack\client-development-fallback\0.pack.gz_' -> 'C:\Users\Laptop On Rent 137\Project-8\.next\cache\webpack\client-development-fallback\0.pack.gz'
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⨯ app\masters\gl\page.tsx (234:14) @ showForm
+ ⨯ ReferenceError: showForm is not defined
+    at GLMasterPage (./app/masters/gl/page.tsx:231:31)
+digest: "2754331437"
+[0m [90m 232 |[39m             className[33m=[39m[32m"rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-opacity-90 transition-all"[39m[0m
+[0m [90m 233 |[39m           [33m>[39m[0m
+[0m[31m[1m>[22m[39m[90m 234 |[39m             {showForm [33m?[39m [32m"Cancel"[39m [33m:[39m [32m"+ Add Account"[39m}[0m
+[0m [90m     |[39m              [31m[1m^[22m[39m[0m
+[0m [90m 235 |[39m           [33m<[39m[33m/[39m[33mbutton[39m[33m>[39m[0m
+[0m [90m 236 |[39m         }[0m
+[0m [90m 237 |[39m       [33m/[39m[33m>[39m[0m
+ ⨯ app\masters\gl\page.tsx (234:14) @ showForm
+ ⨯ ReferenceError: showForm is not defined
+    at GLMasterPage (./app/masters/gl/page.tsx:231:31)
+digest: "2754331437"
+[0m [90m 232 |[39m             className[33m=[39m[32m"rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-opacity-90 transition-all"[39m[0m
+[0m [90m 233 |[39m           [33m>[39m[0m
+[0m[31m[1m>[22m[39m[90m 234 |[39m             {showForm [33m?[39m [32m"Cancel"[39m [33m:[39m [32m"+ Add Account"[39m}[0m
+[0m [90m     |[39m              [31m[1m^[22m[39m[0m
+[0m [90m 235 |[39m           [33m<[39m[33m/[39m[33mbutton[39m[33m>[39m[0m
+[0m [90m 236 |[39m         }[0m
+[0m [90m 237 |[39m       [33m/[39m[33m>[39m[0m
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⨯ app\masters\gl\page.tsx (272:14) @ showForm
+ ⨯ ReferenceError: showForm is not defined
+    at GLMasterPage (./app/masters/gl/page.tsx:241:31)
+digest: "1749921290"
+[0m [90m 270 |[39m             className[33m=[39m[32m"rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-opacity-90 transition-all"[39m[0m
+[0m [90m 271 |[39m           [33m>[39m[0m
+[0m[31m[1m>[22m[39m[90m 272 |[39m             {showForm [33m?[39m [32m"Cancel"[39m [33m:[39m [32m"+ Add Account"[39m}[0m
+[0m [90m     |[39m              [31m[1m^[22m[39m[0m
+[0m [90m 273 |[39m           [33m<[39m[33m/[39m[33mbutton[39m[33m>[39m[0m
+[0m [90m 274 |[39m         }[0m
+[0m [90m 275 |[39m       [33m/[39m[33m>[39m[0m
+ ⨯ app\masters\gl\page.tsx (272:14) @ showForm
+ ⨯ ReferenceError: showForm is not defined
+    at GLMasterPage (./app/masters/gl/page.tsx:241:31)
+digest: "1749921290"
+[0m [90m 270 |[39m             className[33m=[39m[32m"rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-opacity-90 transition-all"[39m[0m
+[0m [90m 271 |[39m           [33m>[39m[0m
+[0m[31m[1m>[22m[39m[90m 272 |[39m             {showForm [33m?[39m [32m"Cancel"[39m [33m:[39m [32m"+ Add Account"[39m}[0m
+[0m [90m     |[39m              [31m[1m^[22m[39m[0m
+[0m [90m 273 |[39m           [33m<[39m[33m/[39m[33mbutton[39m[33m>[39m[0m
+[0m [90m 274 |[39m         }[0m
+[0m [90m 275 |[39m       [33m/[39m[33m>[39m[0m
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
