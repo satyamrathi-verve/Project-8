@@ -1,0 +1,30 @@
+
+> ar-manager@0.1.0 dev
+> next dev
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+Attention: Next.js now collects completely anonymous telemetry regarding usage.
+This information is used to shape Next.js' roadmap and prioritize features.
+You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+https://nextjs.org/telemetry
+
+ ✓ Ready in 11.6s
+ ○ Compiling / ...
+ ✓ Compiled / in 18.7s (601 modules)
+ GET / 200 in 19695ms
+ GET / 200 in 185ms
+ GET / 200 in 171ms
+ GET / 200 in 285ms
+ GET / 200 in 66ms
+ ✓ Compiled in 6.3s (260 modules)
+ ✓ Compiled in 1576ms (260 modules)
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 20.4s (828 modules)
+ GET / 200 in 556ms
+ ○ Compiling /masters/gl ...
+ ✓ Compiled /masters/gl in 28.5s (977 modules)
+ GET /masters/gl 200 in 33228ms
