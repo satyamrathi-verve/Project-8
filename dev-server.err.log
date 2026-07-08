@@ -17,3 +17,64 @@
     at async Server.requestListener (C:\Users\Laptop On Rent 137\Project-8\node_modules\next\dist\server\lib\start-server.js:141:13) {
   page: '/'
 }
+ ⨯ ./app/masters/gl/page.tsx
+Error: 
+  [31mx[0m Unexpected token `div`. Expected jsx identifier
+     ,-[[36;1;4mC:\Users\Laptop On Rent 137\Project-8\app\masters\gl\page.tsx[0m:175:1]
+ [2m175[0m |   ];
+ [2m176[0m | 
+ [2m177[0m |   return (
+ [2m178[0m |     <div className="space-y-6 p-6">
+     : [31;1m     ^^^[0m
+ [2m179[0m |       <PageHeader
+ [2m180[0m |         title="GL Accounts"
+ [2m180[0m |         action={
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./app/masters/gl/page.tsx
+'wmic' is not recognized as an internal or external command,
+operable program or batch file.
+ ⨯ ./app/masters/gl/page.tsx
+Error: 
+  [31mx[0m Unexpected token `div`. Expected jsx identifier
+     ,-[[36;1;4mC:\Users\Laptop On Rent 137\Project-8\app\masters\gl\page.tsx[0m:175:1]
+ [2m175[0m |   ];
+ [2m176[0m | 
+ [2m177[0m |   return (
+ [2m178[0m |     <div className="space-y-6 p-6">
+     : [31;1m     ^^^[0m
+ [2m179[0m |       <PageHeader
+ [2m180[0m |         title="GL Accounts"
+ [2m180[0m |         action={
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./app/masters/gl/page.tsx
+ ⨯ ./app/masters/gl/page.tsx
+Error: 
+  [31mx[0m Expression expected
+     ,-[[36;1;4mC:\Users\Laptop On Rent 137\Project-8\app\masters\gl\page.tsx[0m:303:1]
+ [2m303[0m |     </div>
+ [2m304[0m |   );
+ [2m305[0m | }
+ [2m306[0m |       ) : (
+     : [31;1m      ^[0m
+ [2m307[0m |         <DataTable<GLAccount>
+ [2m308[0m |           columns={columns}
+ [2m308[0m |           rows={accounts}
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./app/masters/gl/page.tsx
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\Laptop On Rent 137\Project-8\.next\cache\webpack\client-development-fallback\0.pack.gz_' -> 'C:\Users\Laptop On Rent 137\Project-8\.next\cache\webpack\client-development-fallback\0.pack.gz'

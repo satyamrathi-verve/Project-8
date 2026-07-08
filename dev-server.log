@@ -28,3 +28,17 @@ https://nextjs.org/telemetry
  ○ Compiling /masters/gl ...
  ✓ Compiled /masters/gl in 28.5s (977 modules)
  GET /masters/gl 200 in 33228ms
+ ○ Compiling /_error ...
+
+Could not open page.tsx in the editor.
+
+When running on Windows, file names are checked against an access list to protect against remote code execution attacks. File names may consist only of alphanumeric characters (all languages), periods, dashes, slashes, and underscores.
+
+ GET /masters/gl 500 in 5312ms
+ GET /masters/gl 500 in 5229ms
+ GET /masters/gl 500 in 2262ms
+ ✓ Compiled /_not-found in 33.2s (981 modules)
+ GET /masters/gl 200 in 31474ms
+ ✓ Compiled (967 modules)
+ GET /masters/gl 200 in 4131ms
+ ✓ Compiled in 8s (967 modules)
