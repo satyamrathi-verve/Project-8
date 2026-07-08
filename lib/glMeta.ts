@@ -371,3 +371,37 @@ export function formatDate(iso: string): string {
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
+
+export function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/* ------------------------------------------------------------------ *
+ * Deterministic demo series (stable across refreshes) — for sparklines
+ * and the monthly-creation trend. Purely presentational.
+ * ------------------------------------------------------------------ */
+
+export function pseudoSeries(seed: string, n: number, base = 10): number[] {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  const out: number[] = [];
+  let v = base + (h % 7);
+  for (let i = 0; i < n; i++) {
+    h = (h * 1103515245 + 12345) & 0x7fffffff;
+    v = Math.max(1, v + ((h % 9) - 4));
+    out.push(v);
+  }
+  return out;
+}
+
+export function lastMonths(n: number): string[] {
+  const now = new Date();
+  const out: string[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push(d.toLocaleDateString("en-IN", { month: "short" }));
+  }
+  return out;
+}
