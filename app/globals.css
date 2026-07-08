@@ -5,7 +5,60 @@
 :root {
   color-scheme: light;
 }
+:root.dark {
+  color-scheme: dark;
+}
 
 body {
   @apply bg-slate-50 text-slate-800 antialiased;
 }
+.dark body {
+  @apply bg-slate-950 text-slate-200;
+}
+
+/* --- shared micro-animations (premium, subtle) --- */
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position: 600px 0; }
+}
+
+.animate-fade-up { animation: fadeInUp 0.3s ease-out both; }
+
+/* Shimmer skeleton */
+.shimmer {
+  background: linear-gradient(90deg, rgba(226,232,240,0.35) 25%, rgba(226,232,240,0.9) 37%, rgba(226,232,240,0.35) 63%);
+  background-size: 600px 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+.dark .shimmer {
+  background: linear-gradient(90deg, rgba(30,41,59,0.4) 25%, rgba(51,65,85,0.7) 37%, rgba(30,41,59,0.4) 63%);
+  background-size: 600px 100%;
+}
+
+/* Glass surface for summary cards */
+.glass {
+  background: linear-gradient(160deg, rgba(255,255,255,0.9), rgba(255,255,255,0.55));
+  backdrop-filter: blur(10px);
+}
+.dark .glass {
+  background: linear-gradient(160deg, rgba(30,41,59,0.75), rgba(15,23,42,0.55));
+  backdrop-filter: blur(10px);
+}
+
+/* Thin scrollbars for data-dense panels */
+.scroll-thin::-webkit-scrollbar { height: 9px; width: 9px; }
+.scroll-thin::-webkit-scrollbar-thumb { @apply rounded-full bg-slate-300; }
+.dark .scroll-thin::-webkit-scrollbar-thumb { @apply bg-slate-700; }
+.scroll-thin::-webkit-scrollbar-thumb:hover { @apply bg-slate-400; }
+.scroll-thin::-webkit-scrollbar-track { background: transparent; }
+
+/* Frozen-column helper: subtle separating shadow */
+.freeze-shadow { box-shadow: 8px 0 12px -10px rgba(16,24,40,0.25); }

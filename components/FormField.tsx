@@ -11,4 +11,4 @@ export function FormField({ label, children }: { label: string; children: ReactN
 
 /** Shared input styling so every form looks the same. Use on <input>/<select>. */
 export const inputClass =
-  "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-brand focus:ring-1 focus:ring-brand";
+  "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition-colors focus:border-brand focus:ring-1 focus:ring-brand placeholder:text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500";

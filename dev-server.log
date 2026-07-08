@@ -66,3 +66,53 @@ When running on Windows, file names are checked against an access list to protec
  ✓ Compiled /masters/gl in 5.1s (971 modules)
  GET /masters/gl 200 in 4002ms
  ✓ Compiled in 4.4s (982 modules)
+ GET /masters/gl 200 in 537ms
+ ✓ Compiled in 6.2s (512 modules)
+ ✓ Compiled in 2.7s (512 modules)
+ ✓ Compiled in 2.5s (512 modules)
+ ✓ Compiled in 1744ms (512 modules)
+ ✓ Compiled in 1929ms (512 modules)
+ ✓ Compiled in 1868ms (512 modules)
+ ✓ Compiled in 2.3s (512 modules)
+ ✓ Compiled in 769ms (512 modules)
+ ✓ Compiled in 1936ms (512 modules)
+ GET /masters/gl 200 in 629ms
+ ✓ Compiled in 13.1s (512 modules)
+ ✓ Compiled in 4.2s (512 modules)
+ GET /masters/gl 200 in 1669ms
+ ✓ Compiled in 5.1s (512 modules)
+ ✓ Compiled in 2.4s (512 modules)
+ ✓ Compiled in 6.2s (982 modules)
+ ✓ Compiled in 4.8s (982 modules)
+ ✓ Compiled in 4.8s (982 modules)
+ GET /masters/gl 500 in 62ms
+ GET /masters/gl 500 in 171ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 14.9s (993 modules)
+ GET /_next/static/webpack/806252aebe4bd7ef.webpack.hot-update.json 404 in 13498ms
+ GET /_next/static/webpack/806252aebe4bd7ef.webpack.hot-update.json 404 in 13879ms
+ GET /masters/gl 200 in 2764ms
+ GET /masters/gl 200 in 2762ms
+ GET /masters/gl 200 in 175ms
+ GET /masters/gl 200 in 526ms
+ ✓ Compiled in 6.4s (990 modules)
+ ✓ Compiled in 5s (516 modules)
+ ✓ Compiled in 2.9s (990 modules)
+ ✓ Compiled in 11s (1003 modules)
+ GET /masters/gl 200 in 5965ms
+ ✓ Compiled in 26.3s (994 modules)
+ ✓ Compiled in 3.6s (980 modules)
+ ✓ Compiled in 7.7s (994 modules)
+ ✓ Compiled in 1345ms (519 modules)
+ ✓ Compiled in 7.2s (519 modules)
+ ✓ Compiled in 3.3s (519 modules)
+ ✓ Compiled in 7.3s (519 modules)
+ ✓ Compiled in 11.6s (519 modules)
+ ✓ Compiled in 24.6s (994 modules)
+ ✓ Compiled in 7.7s (994 modules)
+ ✓ Compiled in 7.8s (994 modules)
+ ✓ Compiled in 34.5s (994 modules)
+ ✓ Compiled in 14.4s (1708 modules)
+ ✓ Compiled in 4.5s (1708 modules)
+ GET /masters/gl 200 in 1775ms
+ GET /masters/gl 200 in 6980ms

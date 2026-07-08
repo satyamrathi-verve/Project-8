@@ -29,12 +29,12 @@ export function Drawer({
     <>
       {/* Overlay */}
       <div
-        className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm transition-opacity"
+        className="animate-overlay fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-sm"
         onClick={onClose}
       />
 
       {/* Drawer */}
-      <div className={`fixed right-0 top-0 z-50 h-screen flex flex-col bg-white shadow-2xl transition-transform duration-300 ${sizeClasses[size]}`}>
+      <div className={`animate-drawer fixed right-0 top-0 z-50 flex h-screen max-w-[95vw] flex-col bg-white shadow-2xl ${sizeClasses[size]}`}>
         {/* Header */}
         <div className="border-b border-slate-200 px-6 py-5">
           <div className="flex items-start justify-between gap-4">
