@@ -359,6 +359,8 @@ const STATUS_TONE: Record<Invoice["status"], keyof typeof BADGE_TONES> = {
   paid: "success",
   overdue: "danger",
   partial: "warning",
+  draft: "neutral",
+  void: "danger",
 };
 
 const PRIORITY_TONE: Record<InvoiceRow["priority"], keyof typeof BADGE_TONES> = {
