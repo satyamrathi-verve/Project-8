@@ -59,6 +59,22 @@ const FINANCE_STATUS: Record<
   severe: { label: "Severely Critical", pill: "border-rose-900/30 bg-rose-900 text-rose-50", bar: "#7f1d1d" },
 };
 
+const BUCKET_TO_STATUS: Record<Bucket, FinanceStatus> = {
+  notDue: "current",
+  d0_30: "slightly",
+  d31_60: "attention",
+  d61_90: "critical",
+  d90plus: "severe",
+};
+
+const RISK_DISPLAY_LABEL: Record<FinanceStatus, string> = {
+  current: "Low Risk",
+  slightly: "Medium Risk",
+  attention: "High Risk",
+  critical: "Critical",
+  severe: "Severely Critical",
+};
+
 const INVOICE_STATUS_STYLE: Record<string, string> = {
   overdue: "border-red-200 bg-red-50 text-red-700",
   partial: "border-amber-200 bg-amber-50 text-amber-700",
@@ -370,6 +386,7 @@ const IconAlertCircle = (p: { className?: string }) => <Icon className={p.classN
 const IconInfo = (p: { className?: string }) => <Icon className={p.className}><circle cx="12" cy="12" r="9" /><line x1="12" y1="16" x2="12" y2="11" /><line x1="12" y1="8" x2="12" y2="8.01" /></Icon>;
 const IconMail = (p: { className?: string }) => <Icon className={p.className}><rect x="2" y="4" width="20" height="16" rx="2" /><polyline points="2 7 12 13 22 7" /></Icon>;
 const IconPhone = (p: { className?: string }) => <Icon className={p.className}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" /></Icon>;
+const IconReport = (p: { className?: string }) => <Icon className={p.className}><path d="M9 2h6a2 2 0 0 1 2 2v1h1a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h1V4a2 2 0 0 1 2-2z" /><line x1="9" y1="12" x2="15" y2="12" /><line x1="9" y1="16" x2="15" y2="16" /><line x1="9" y1="8" x2="12" y2="8" /></Icon>;
 
 const BUCKET_ICON: Record<Bucket, (p: { className?: string }) => JSX.Element> = {
   notDue: IconCheckCircle,
@@ -956,6 +973,990 @@ function ResizeHandle({ onDrag }: { onDrag: (deltaX: number) => void }) {
   );
 }
 
+/* ------------------------------ report stat tile ------------------------------ */
+
+function ReportStat({ label, value, accentClass, caption }: { label: string; value: string; accentClass?: string; caption?: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className={`mt-1.5 truncate font-mono text-lg font-semibold tabular-nums ${accentClass ?? "text-slate-900"}`} title={value}>
+        {value}
+      </p>
+      {caption && <p className="mt-0.5 truncate text-[11px] text-slate-400">{caption}</p>}
+    </div>
+  );
+}
+
+/* ==================================================================================== */
+/* AR detailed summary report — a full-screen, print-friendly ERP-style report built    */
+/* entirely from data already loaded by the AR Ageing screen (rows / grandTotal / trend  */
+/* / receipts / payment-gap map). No new queries except a one-time read of the existing  */
+/* `company` table for the report header. No calculations here override or duplicate the */
+/* ageing math elsewhere — every figure is derived (sums, averages, sorts) from the same  */
+/* `rows`/`grandTotal` the rest of the page already computed.                             */
+/* ==================================================================================== */
+
+function DetailedSummaryReport({
+  rows,
+  grandTotal,
+  asOf,
+  trend,
+  monthlyTrend,
+  receiptsByCustomer,
+  avgPaymentDaysByCustomer,
+  totalInvoicedAll,
+  totalCollectedAll,
+  collectionRate,
+  avgOutstandingAge,
+  onClose,
+}: {
+  rows: CustomerRow[];
+  grandTotal: { buckets: Record<Bucket, number>; total: number };
+  asOf: string;
+  trend: { date: string; buckets: Record<Bucket, number>; total: number }[];
+  monthlyTrend: { label: string; value: number }[];
+  receiptsByCustomer: Map<string, ReceiptEntry[]>;
+  avgPaymentDaysByCustomer: Map<string, number>;
+  totalInvoicedAll: number;
+  totalCollectedAll: number;
+  collectionRate: number;
+  avgOutstandingAge: number;
+  onClose: () => void;
+}) {
+  const [companyName, setCompanyName] = useState<string | null>(null);
+  const generatedAt = useRef(new Date()).current;
+
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    supabase
+      .from("company")
+      .select("name")
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setCompanyName(data?.name ?? null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, []);
+
+  const totalCustomers = rows.length;
+
+  const allInvoices = useMemo(
+    () =>
+      rows.flatMap((r) =>
+        r.invoices.map((inv) => ({ ...inv, customerId: r.customerId, customerName: r.name, customerCode: r.code, creditDays: r.creditDays }))
+      ),
+    [rows]
+  );
+  type FlatInvoice = (typeof allInvoices)[number];
+  const outstandingInvoicesFlat = useMemo(() => allInvoices.filter((inv) => inv.outstanding > 0.005), [allInvoices]);
+  const totalInvoicesCount = allInvoices.length;
+
+  const highestOutstandingCustomer = useMemo(
+    () => rows.reduce<CustomerRow | null>((best, r) => (!best || r.total > best.total ? r : best), null),
+    [rows]
+  );
+  const largestInvoice = useMemo(
+    () => outstandingInvoicesFlat.reduce<FlatInvoice | null>((best, inv) => (!best || inv.total > best.total ? inv : best), null),
+    [outstandingInvoicesFlat]
+  );
+  const oldestOutstandingInvoice = useMemo(
+    () => outstandingInvoicesFlat.reduce<FlatInvoice | null>((best, inv) => (!best || inv.invoiceDate < best.invoiceDate ? inv : best), null),
+    [outstandingInvoicesFlat]
+  );
+
+  const currentPct = grandTotal.total > 0 ? (grandTotal.buckets.notDue / grandTotal.total) * 100 : 0;
+  const overduePct = 100 - currentPct;
+  const avgOutstandingPerCustomer = totalCustomers > 0 ? grandTotal.total / totalCustomers : 0;
+
+  const bucketSummary = useMemo(
+    () =>
+      BUCKETS.map((b) => {
+        const invoicesInBucket = outstandingInvoicesFlat.filter((inv) => bucketFor(daysBetween(asOf, inv.dueDate)) === b.key);
+        const customersInBucket = rows.filter((r) => r.buckets[b.key] > 0).length;
+        const outstanding = grandTotal.buckets[b.key];
+        const pct = grandTotal.total > 0 ? (outstanding / grandTotal.total) * 100 : 0;
+        const avgDays =
+          invoicesInBucket.length > 0
+            ? invoicesInBucket.reduce((s, inv) => s + daysBetween(asOf, inv.dueDate), 0) / invoicesInBucket.length
+            : 0;
+        return {
+          key: b.key,
+          label: b.key === "d90plus" ? "91+ Days" : b.label,
+          customers: customersInBucket,
+          invoices: invoicesInBucket.length,
+          outstanding,
+          pct,
+          avgDays,
+          status: BUCKET_TO_STATUS[b.key],
+        };
+      }),
+    [rows, grandTotal, outstandingInvoicesFlat, asOf]
+  );
+
+  const customerSummary = useMemo(
+    () =>
+      rows.map((r) => {
+        const receipts = receiptsByCustomer.get(r.customerId) ?? [];
+        const lastPayment = receipts.length > 0 ? receipts[receipts.length - 1].date : null;
+        const oldestInvoice = r.invoices.reduce<string | null>((min, inv) => (!min || inv.invoiceDate < min ? inv.invoiceDate : min), null);
+        const overdueInvoices = r.invoices.filter((inv) => inv.outstanding > 0.005);
+        const daysOverdue = overdueInvoices.reduce((max, inv) => Math.max(max, daysBetween(asOf, inv.dueDate)), 0);
+        const status = financeStatusFor(r.buckets);
+        const priority = status === "severe" || status === "critical" ? "Immediate" : status === "attention" ? "High" : status === "slightly" ? "Medium" : "Low";
+        return { ...r, lastPayment, oldestInvoice, daysOverdue, status, priority };
+      }),
+    [rows, receiptsByCustomer, asOf]
+  );
+  type CustomerSummaryRow = (typeof customerSummary)[number];
+
+  const [custSearch, setCustSearch] = useState("");
+  const [custRiskFilter, setCustRiskFilter] = useState<"all" | FinanceStatus>("all");
+  const [custSort, setCustSort] = useState<"totalDesc" | "totalAsc" | "nameAsc" | "daysDesc">("totalDesc");
+  const [custPage, setCustPage] = useState(1);
+  const custPageSize = 15;
+
+  const filteredCustomers = useMemo(() => {
+    let list: CustomerSummaryRow[] = customerSummary;
+    const q = custSearch.trim().toLowerCase();
+    if (q) list = list.filter((r) => r.name.toLowerCase().includes(q) || r.code.toLowerCase().includes(q));
+    if (custRiskFilter !== "all") list = list.filter((r) => r.status === custRiskFilter);
+    const sorted = [...list].sort((a, b) => {
+      switch (custSort) {
+        case "nameAsc":
+          return a.name.localeCompare(b.name);
+        case "totalAsc":
+          return a.total - b.total;
+        case "daysDesc":
+          return b.daysOverdue - a.daysOverdue;
+        default:
+          return b.total - a.total;
+      }
+    });
+    return sorted;
+  }, [customerSummary, custSearch, custRiskFilter, custSort]);
+
+  const custTotalPages = Math.max(1, Math.ceil(filteredCustomers.length / custPageSize));
+  const custCurrentPage = Math.min(custPage, custTotalPages);
+  const pagedCustomers = filteredCustomers.slice((custCurrentPage - 1) * custPageSize, custCurrentPage * custPageSize);
+
+  const [invSearch, setInvSearch] = useState("");
+  const [invPage, setInvPage] = useState(1);
+  const invPageSize = 20;
+
+  const filteredInvoices = useMemo(() => {
+    const q = invSearch.trim().toLowerCase();
+    if (!q) return allInvoices;
+    return allInvoices.filter((inv) => inv.invoiceNo.toLowerCase().includes(q) || inv.customerName.toLowerCase().includes(q));
+  }, [allInvoices, invSearch]);
+  const invTotalPages = Math.max(1, Math.ceil(filteredInvoices.length / invPageSize));
+  const invCurrentPage = Math.min(invPage, invTotalPages);
+  const pagedInvoices = filteredInvoices.slice((invCurrentPage - 1) * invPageSize, invCurrentPage * invPageSize);
+
+  const top10 = useMemo(
+    () =>
+      [...rows]
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 10)
+        .map((r) => {
+          const overdueInvoices = r.invoices.filter((inv) => inv.outstanding > 0.005);
+          const daysOverdue = overdueInvoices.reduce((max, inv) => Math.max(max, daysBetween(asOf, inv.dueDate)), 0);
+          const receipts = receiptsByCustomer.get(r.customerId) ?? [];
+          const lastPayment = receipts.length > 0 ? receipts[receipts.length - 1].date : null;
+          return { ...r, daysOverdue, lastPayment, status: financeStatusFor(r.buckets) };
+        }),
+    [rows, asOf, receiptsByCustomer]
+  );
+
+  const totalCurrentReceivable = grandTotal.buckets.notDue;
+  const totalOverdueReceivable = grandTotal.total - totalCurrentReceivable;
+  const overdueReceivablePct = grandTotal.total > 0 ? (totalOverdueReceivable / grandTotal.total) * 100 : 0;
+  const avgCollectionDays = useMemo(() => {
+    const vals = Array.from(avgPaymentDaysByCustomer.values());
+    return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+  }, [avgPaymentDaysByCustomer]);
+  const avgInvoiceValue = outstandingInvoicesFlat.length > 0 ? outstandingInvoicesFlat.reduce((s, inv) => s + inv.total, 0) / outstandingInvoicesFlat.length : 0;
+  const highestBalance = rows.length > 0 ? Math.max(...rows.map((r) => r.total)) : 0;
+  const lowestBalance = rows.length > 0 ? Math.min(...rows.map((r) => r.total)) : 0;
+
+  const riskAnalysis = useMemo(() => {
+    const map: Record<FinanceStatus, { count: number; outstanding: number }> = {
+      current: { count: 0, outstanding: 0 },
+      slightly: { count: 0, outstanding: 0 },
+      attention: { count: 0, outstanding: 0 },
+      critical: { count: 0, outstanding: 0 },
+      severe: { count: 0, outstanding: 0 },
+    };
+    for (const r of rows) {
+      const s = financeStatusFor(r.buckets);
+      map[s].count += 1;
+      map[s].outstanding += r.total;
+    }
+    return map;
+  }, [rows]);
+
+  const donutSegments = useMemo(
+    () => BUCKETS.map((b) => ({ key: b.key, label: b.label, range: bucketDateRange(b.key, asOf), value: grandTotal.buckets[b.key], color: BUCKET_COLOR[b.key] })),
+    [grandTotal, asOf]
+  );
+  const [hoveredBucket, setHoveredBucket] = useState<Bucket | null>(null);
+
+  const concentration = useMemo(() => {
+    const sorted = [...rows].sort((a, b) => b.total - a.total).slice(0, 8);
+    return sorted.map((r) => ({ name: r.name, value: r.total, pct: grandTotal.total > 0 ? (r.total / grandTotal.total) * 100 : 0 }));
+  }, [rows, grandTotal]);
+
+  const dailyTrendData = useMemo(() => trend.map((t) => ({ label: formatDisplayDate(t.date).slice(0, 6), value: t.total })), [trend]);
+
+  const upcoming = useMemo(() => {
+    function windowSum(days: number) {
+      let count = 0;
+      let sum = 0;
+      for (const inv of outstandingInvoicesFlat) {
+        const daysUntil = -daysBetween(asOf, inv.dueDate);
+        if (daysUntil >= 0 && daysUntil <= days) {
+          count += 1;
+          sum += inv.outstanding;
+        }
+      }
+      return { count, sum };
+    }
+    return { d7: windowSum(7), d15: windowSum(15), d30: windowSum(30) };
+  }, [outstandingInvoicesFlat, asOf]);
+
+  const recommendations = useMemo(() => {
+    const list: string[] = [];
+    const severeBucket = bucketSummary.find((b) => b.key === "d90plus");
+    if (severeBucket && severeBucket.customers > 0) {
+      list.push(
+        `${severeBucket.customers} customer${severeBucket.customers === 1 ? "" : "s"} with 91+ day balances (${money(severeBucket.outstanding)}) require immediate follow-up.`
+      );
+    }
+    const top5Sum = [...rows]
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5)
+      .reduce((s, r) => s + r.total, 0);
+    const top5Pct = grandTotal.total > 0 ? (top5Sum / grandTotal.total) * 100 : 0;
+    if (top5Pct >= 40) {
+      list.push(`Top 5 customers contribute ${top5Pct.toFixed(0)}% of total outstanding receivables — a notable concentration risk.`);
+    }
+    const riskLevel = overduePct >= 50 ? "High" : overduePct >= 30 ? "Moderate" : "Low";
+    list.push(`Collection risk is ${riskLevel} — ${overduePct.toFixed(0)}% of receivables are overdue as of ${formatDisplayDate(asOf)}.`);
+    list.push(`Current receivables represent ${currentPct.toFixed(0)}% of total outstanding.`);
+    const nonCurrentBuckets = bucketSummary.filter((b) => b.key !== "notDue");
+    const worstNonCurrent = nonCurrentBuckets.reduce((max, b) => (b.pct > max.pct ? b : max), nonCurrentBuckets[0]);
+    if (worstNonCurrent && worstNonCurrent.pct >= 25) {
+      list.push(`${worstNonCurrent.label} balances represent an unusually high ${worstNonCurrent.pct.toFixed(0)}% of total outstanding — review this ageing concentration.`);
+    }
+    if (list.length === 0) list.push("Receivables are well distributed with no immediate collection concerns.");
+    return list;
+  }, [bucketSummary, rows, grandTotal, overduePct, currentPct, asOf]);
+
+  function printReport() {
+    window.print();
+  }
+
+  function exportSummaryCsv() {
+    const lines: string[] = [];
+    lines.push(`AR Detailed Summary Report`);
+    lines.push(`As of,${formatDisplayDate(asOf)}`);
+    lines.push(`Generated,${generatedAt.toLocaleString("en-IN")}`);
+    lines.push("");
+    lines.push("Ageing Bucket Summary");
+    lines.push(["Bucket", "Customers", "Invoices", "Outstanding", "% of Total", "Avg Days", "Risk Level"].join(","));
+    for (const b of bucketSummary) {
+      lines.push([b.label, b.customers, b.invoices, b.outstanding.toFixed(2), b.pct.toFixed(1), b.avgDays.toFixed(0), RISK_DISPLAY_LABEL[b.status]].join(","));
+    }
+    lines.push(["Grand Total", totalCustomers, totalInvoicesCount, grandTotal.total.toFixed(2), "100.0", "", ""].join(","));
+    lines.push("");
+    lines.push("Customer Summary");
+    lines.push(["Code", "Name", ...BUCKETS.map((b) => b.label), "Total", "Status", "Risk", "Last Payment", "Oldest Invoice", "Days Overdue", "Priority"].join(","));
+    for (const r of customerSummary) {
+      lines.push(
+        [
+          r.code,
+          `"${r.name.replace(/"/g, '""')}"`,
+          ...BUCKETS.map((b) => r.buckets[b.key].toFixed(2)),
+          r.total.toFixed(2),
+          worstInvoiceStatus(r.statuses),
+          RISK_DISPLAY_LABEL[r.status],
+          r.lastPayment ?? "",
+          r.oldestInvoice ?? "",
+          r.daysOverdue,
+          r.priority,
+        ].join(",")
+      );
+    }
+    lines.push("");
+    lines.push("Invoice Details");
+    lines.push(["Invoice No", "Customer", "Invoice Date", "Due Date", "Invoice Amount", "Paid Amount", "Outstanding", "Days Overdue", "Bucket", "Payment Terms", "Status"].join(","));
+    for (const inv of allInvoices) {
+      const paid = inv.total - inv.outstanding;
+      const overdue = daysOverdueLabel(asOf, inv.dueDate);
+      lines.push(
+        [
+          inv.invoiceNo,
+          `"${inv.customerName.replace(/"/g, '""')}"`,
+          inv.invoiceDate,
+          inv.dueDate,
+          inv.total.toFixed(2),
+          paid.toFixed(2),
+          inv.outstanding.toFixed(2),
+          overdue.text,
+          inv.outstanding > 0.005 ? BUCKETS.find((b) => b.key === bucketFor(daysBetween(asOf, inv.dueDate)))?.label : "Paid",
+          `Net ${inv.creditDays} days`,
+          inv.status,
+        ].join(",")
+      );
+    }
+    downloadReportBlob(lines.join("\n"), `ar-detailed-summary-${asOf}.csv`, "text/csv;charset=utf-8;");
+  }
+
+  function exportSummaryExcel() {
+    function tableHtml(title: string, header: string[], body: (string | number)[][]) {
+      const th = header.map((h) => `<th style="background:#0f172a;color:#fff;padding:6px 10px;border:1px solid #cbd5e1;text-align:left;">${h}</th>`).join("");
+      const rowsHtml = body
+        .map((row) => `<tr>${row.map((c) => `<td style="padding:6px 10px;border:1px solid #e2e8f0;">${c}</td>`).join("")}</tr>`)
+        .join("");
+      return `<h3 style="font-family:sans-serif;color:#0f172a;">${title}</h3><table style="border-collapse:collapse;font-family:sans-serif;font-size:12px;">${
+        th ? `<tr>${th}</tr>` : ""
+      }${rowsHtml}</table><br/>`;
+    }
+
+    let html = `<html><head><meta charset="utf-8" /></head><body>`;
+    html += `<h1 style="font-family:sans-serif;">${companyName ?? "AR Manager"} — AR Detailed Summary Report</h1>`;
+    html += `<p style="font-family:sans-serif;color:#475569;">As of ${formatDisplayDate(asOf)} · Generated ${generatedAt.toLocaleString("en-IN")}</p>`;
+
+    html += tableHtml(
+      "Executive Summary",
+      ["Metric", "Value"],
+      [
+        ["Total Outstanding", money(grandTotal.total)],
+        ["Current", money(grandTotal.buckets.notDue)],
+        ["0-30 Days", money(grandTotal.buckets.d0_30)],
+        ["31-60 Days", money(grandTotal.buckets.d31_60)],
+        ["61-90 Days", money(grandTotal.buckets.d61_90)],
+        ["91+ Days", money(grandTotal.buckets.d90plus)],
+        ["Current %", `${currentPct.toFixed(1)}%`],
+        ["Overdue %", `${overduePct.toFixed(1)}%`],
+        ["Avg Outstanding / Customer", money(avgOutstandingPerCustomer)],
+        ["Avg Days Outstanding", avgOutstandingAge.toFixed(0)],
+        ["Highest Outstanding Customer", highestOutstandingCustomer ? `${highestOutstandingCustomer.name} (${money(highestOutstandingCustomer.total)})` : "—"],
+        ["Largest Invoice", largestInvoice ? `${largestInvoice.invoiceNo} (${money(largestInvoice.total)})` : "—"],
+        ["Oldest Outstanding Invoice", oldestOutstandingInvoice ? `${oldestOutstandingInvoice.invoiceNo} (${oldestOutstandingInvoice.invoiceDate})` : "—"],
+      ]
+    );
+
+    html += tableHtml(
+      "Ageing Bucket Summary",
+      ["Bucket", "Customers", "Invoices", "Outstanding", "% of Total", "Avg Days", "Risk Level"],
+      bucketSummary.map((b) => [b.label, b.customers, b.invoices, money(b.outstanding), `${b.pct.toFixed(1)}%`, b.avgDays.toFixed(0), RISK_DISPLAY_LABEL[b.status]])
+    );
+
+    html += tableHtml(
+      "Customer Summary",
+      ["Code", "Name", ...BUCKETS.map((b) => b.label), "Total", "Risk", "Last Payment", "Oldest Invoice", "Days Overdue", "Priority"],
+      customerSummary.map((r) => [
+        r.code,
+        r.name,
+        ...BUCKETS.map((b) => money(r.buckets[b.key])),
+        money(r.total),
+        RISK_DISPLAY_LABEL[r.status],
+        r.lastPayment ?? "—",
+        r.oldestInvoice ?? "—",
+        r.daysOverdue,
+        r.priority,
+      ])
+    );
+
+    html += tableHtml(
+      "Invoice Details",
+      ["Invoice No", "Customer", "Invoice Date", "Due Date", "Amount", "Paid", "Outstanding", "Days Overdue", "Terms", "Status"],
+      allInvoices.map((inv) => [
+        inv.invoiceNo,
+        inv.customerName,
+        inv.invoiceDate,
+        inv.dueDate,
+        money(inv.total),
+        money(inv.total - inv.outstanding),
+        money(inv.outstanding),
+        daysOverdueLabel(asOf, inv.dueDate).text,
+        `Net ${inv.creditDays}d`,
+        inv.status,
+      ])
+    );
+
+    html += tableHtml(
+      "Top Overdue Customers",
+      ["Customer", "Outstanding", "Days Overdue", "Risk", "Last Payment"],
+      top10.map((r) => [r.name, money(r.total), r.daysOverdue, RISK_DISPLAY_LABEL[r.status], r.lastPayment ?? "—"])
+    );
+
+    html += tableHtml(
+      "Risk Analysis",
+      ["Risk Level", "Customers", "Outstanding"],
+      (["current", "slightly", "attention", "critical", "severe"] as FinanceStatus[]).map((s) => [RISK_DISPLAY_LABEL[s], riskAnalysis[s].count, money(riskAnalysis[s].outstanding)])
+    );
+
+    html += tableHtml("Outstanding Trend (Monthly)", ["Month", "Outstanding"], monthlyTrend.map((m) => [m.label, money(m.value)]));
+
+    html += tableHtml(
+      "Collection Summary",
+      ["Metric", "Value"],
+      [
+        ["Total Current Receivable", money(totalCurrentReceivable)],
+        ["Total Overdue Receivable", money(totalOverdueReceivable)],
+        ["Overdue %", `${overdueReceivablePct.toFixed(1)}%`],
+        ["Avg Collection Days", avgCollectionDays.toFixed(0)],
+        ["Avg Invoice Value", money(avgInvoiceValue)],
+        ["Highest Balance", money(highestBalance)],
+        ["Lowest Balance", money(lowestBalance)],
+        ["Collection Rate", `${collectionRate.toFixed(1)}%`],
+        ["Total Invoiced (All)", money(totalInvoicedAll)],
+        ["Total Collected (All)", money(totalCollectedAll)],
+      ]
+    );
+
+    html += `</body></html>`;
+    downloadReportBlob(html, `ar-detailed-summary-${asOf}.xls`, "application/vnd.ms-excel;charset=utf-8;");
+  }
+
+  function downloadReportBlob(content: string, filename: string, mime: string) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[200] overflow-y-auto bg-slate-100 print:static print:overflow-visible print:bg-white">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur-sm print:hidden">
+        <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3 px-6 py-3">
+          <div className="flex items-center gap-2">
+            <IconReport className="h-4 w-4 text-slate-400" />
+            <span className="text-sm font-semibold text-slate-800">AR Detailed Summary Report</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={exportSummaryCsv} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
+              <IconFileText className="h-4 w-4" />
+              Export CSV
+            </button>
+            <button onClick={exportSummaryExcel} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
+              <IconDownload className="h-4 w-4" />
+              Export Excel
+            </button>
+            <button onClick={printReport} className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-dark">
+              <IconPrinter className="h-4 w-4" />
+              Print / PDF
+            </button>
+            <button onClick={onClose} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50">
+              <IconX className="h-4 w-4" />
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="mx-auto flex max-w-[1400px] flex-col gap-8 px-6 py-8 print:max-w-none print:gap-6 print:px-8">
+        {/* SECTION 1 — Report header */}
+        <div className="rounded-2xl border border-slate-200 bg-slate-950 p-6 text-white print:rounded-none print:border-0 print:bg-white print:text-slate-900">
+          <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 print:text-slate-500">{companyName ?? "AR Manager"}</p>
+          <h1 className="mt-1 text-2xl font-bold">AR Detailed Summary Report</h1>
+          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">Report As Of</p>
+              <p className="font-mono text-slate-100 print:text-slate-800">{formatDisplayDate(asOf)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">Generated</p>
+              <p className="font-mono text-slate-100 print:text-slate-800">{generatedAt.toLocaleString("en-IN")}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">Generated By</p>
+              <p className="font-mono text-slate-100 print:text-slate-800">—</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">Currency</p>
+              <p className="font-mono text-slate-100 print:text-slate-800">INR (₹)</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">Total Customers</p>
+              <p className="font-mono text-slate-100 print:text-slate-800">{totalCustomers}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">Total Invoices</p>
+              <p className="font-mono text-slate-100 print:text-slate-800">{totalInvoicesCount}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION 2 — Executive summary */}
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Executive Summary</h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            <ReportStat label="Total Outstanding" value={money(grandTotal.total)} accentClass="text-slate-900 text-xl" />
+            <ReportStat label="Current" value={money(grandTotal.buckets.notDue)} accentClass="text-emerald-700" />
+            <ReportStat label="0–30 Days" value={money(grandTotal.buckets.d0_30)} />
+            <ReportStat label="31–60 Days" value={money(grandTotal.buckets.d31_60)} accentClass="text-amber-700" />
+            <ReportStat label="61–90 Days" value={money(grandTotal.buckets.d61_90)} accentClass="text-orange-700" />
+            <ReportStat label="91+ Days" value={money(grandTotal.buckets.d90plus)} accentClass="text-red-700" />
+            <ReportStat label="Current %" value={`${currentPct.toFixed(1)}%`} accentClass="text-emerald-700" />
+            <ReportStat label="Overdue %" value={`${overduePct.toFixed(1)}%`} accentClass="text-red-700" />
+            <ReportStat label="Avg Outstanding / Customer" value={money(avgOutstandingPerCustomer)} />
+            <ReportStat label="Avg Days Outstanding" value={`${avgOutstandingAge.toFixed(0)} days`} />
+            <ReportStat
+              label="Highest Outstanding Customer"
+              value={highestOutstandingCustomer ? money(highestOutstandingCustomer.total) : "—"}
+              caption={highestOutstandingCustomer?.name}
+            />
+            <ReportStat label="Largest Invoice" value={largestInvoice ? money(largestInvoice.total) : "—"} caption={largestInvoice?.invoiceNo} />
+            <ReportStat
+              label="Oldest Outstanding Invoice"
+              value={oldestOutstandingInvoice ? formatDisplayDate(oldestOutstandingInvoice.invoiceDate) : "—"}
+              caption={oldestOutstandingInvoice?.invoiceNo}
+            />
+          </div>
+        </div>
+
+        {/* SECTION 3 — Ageing bucket summary */}
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Ageing Bucket Summary</h2>
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-2.5">Bucket</th>
+                  <th className="px-4 py-2.5 text-right">Customers</th>
+                  <th className="px-4 py-2.5 text-right">Invoices</th>
+                  <th className="px-4 py-2.5 text-right">Outstanding</th>
+                  <th className="px-4 py-2.5 text-right">% of Total</th>
+                  <th className="px-4 py-2.5 text-right">Avg Days</th>
+                  <th className="px-4 py-2.5 text-center">Risk Level</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bucketSummary.map((b) => (
+                  <tr key={b.key} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                    <td className="px-4 py-2.5 font-medium text-slate-800">{b.label}</td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-slate-700">{b.customers}</td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-slate-700">{b.invoices}</td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-slate-900">{money(b.outstanding)}</td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-slate-500">{b.pct.toFixed(1)}%</td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-slate-500">{b.avgDays.toFixed(0)}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium ${FINANCE_STATUS[b.status].pill}`}>
+                        <Dot color={FINANCE_STATUS[b.status].bar} /> {RISK_DISPLAY_LABEL[b.status]}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-950 text-white">
+                  <td className="px-4 py-3 text-xs font-bold uppercase tracking-widest text-slate-300">Grand Total</td>
+                  <td className="px-4 py-3 text-right font-mono tabular-nums">{totalCustomers}</td>
+                  <td className="px-4 py-3 text-right font-mono tabular-nums">{totalInvoicesCount}</td>
+                  <td className="px-4 py-3 text-right font-mono font-bold tabular-nums">{money(grandTotal.total)}</td>
+                  <td className="px-4 py-3 text-right font-mono tabular-nums">100.0%</td>
+                  <td className="px-4 py-3" />
+                  <td className="px-4 py-3" />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        {/* SECTION 4 — Customer summary */}
+        <div>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Customer Summary</h2>
+            <div className="flex flex-wrap items-center gap-2 print:hidden">
+              <div className="relative">
+                <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={custSearch}
+                  onChange={(e) => {
+                    setCustSearch(e.target.value);
+                    setCustPage(1);
+                  }}
+                  placeholder="Search customer…"
+                  className={`${inputClass} w-48 py-1.5 pl-8 text-xs`}
+                />
+              </div>
+              <select
+                value={custRiskFilter}
+                onChange={(e) => {
+                  setCustRiskFilter(e.target.value as "all" | FinanceStatus);
+                  setCustPage(1);
+                }}
+                className={`${inputClass} py-1.5 text-xs`}
+              >
+                <option value="all">All risk levels</option>
+                {(["current", "slightly", "attention", "critical", "severe"] as FinanceStatus[]).map((s) => (
+                  <option key={s} value={s}>
+                    {RISK_DISPLAY_LABEL[s]}
+                  </option>
+                ))}
+              </select>
+              <select value={custSort} onChange={(e) => setCustSort(e.target.value as typeof custSort)} className={`${inputClass} py-1.5 text-xs`}>
+                <option value="totalDesc">Total (high → low)</option>
+                <option value="totalAsc">Total (low → high)</option>
+                <option value="nameAsc">Name (A–Z)</option>
+                <option value="daysDesc">Days overdue (high → low)</option>
+              </select>
+            </div>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div className="max-h-[420px] overflow-auto print:max-h-none print:overflow-visible">
+              <table className="w-full min-w-[980px] text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5">Customer</th>
+                    {BUCKETS.map((b) => (
+                      <th key={b.key} className="sticky top-0 z-10 bg-slate-50 px-3 py-2.5 text-right">
+                        {b.shortLabel}
+                      </th>
+                    ))}
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5 text-right">Total</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5 text-center">Risk</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5">Last Payment</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5">Oldest Invoice</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2.5 text-right">Days Overdue</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5">Priority</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedCustomers.length === 0 ? (
+                    <tr>
+                      <td colSpan={BUCKETS.length + 6} className="px-4 py-8 text-center text-slate-400">
+                        No customers match your search or filter.
+                      </td>
+                    </tr>
+                  ) : (
+                    pagedCustomers.map((r) => (
+                      <tr key={r.customerId} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                        <td className="px-4 py-2.5">
+                          <span className="font-medium text-slate-900">{r.name}</span>
+                          <span className="ml-2 font-mono text-xs text-slate-400">{r.code}</span>
+                        </td>
+                        {BUCKETS.map((b) => (
+                          <td key={b.key} className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-600">
+                            {r.buckets[b.key] > 0 ? money(r.buckets[b.key]) : "—"}
+                          </td>
+                        ))}
+                        <td className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums text-slate-900">{money(r.total)}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium ${FINANCE_STATUS[r.status].pill}`}>
+                            <Dot color={FINANCE_STATUS[r.status].bar} /> {RISK_DISPLAY_LABEL[r.status]}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{r.lastPayment ? formatDisplayDate(r.lastPayment) : "—"}</td>
+                        <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{r.oldestInvoice ? formatDisplayDate(r.oldestInvoice) : "—"}</td>
+                        <td className={`px-3 py-2.5 text-right font-mono tabular-nums ${r.daysOverdue > 0 ? "font-medium text-red-600" : "text-slate-400"}`}>
+                          {r.daysOverdue > 0 ? r.daysOverdue : "—"}
+                        </td>
+                        <td className="px-4 py-2.5 text-xs font-medium text-slate-600">{r.priority}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-xs text-slate-400 print:hidden">
+            <span className="font-mono">
+              Showing {pagedCustomers.length === 0 ? 0 : (custCurrentPage - 1) * custPageSize + 1}–{(custCurrentPage - 1) * custPageSize + pagedCustomers.length} of{" "}
+              {filteredCustomers.length}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCustPage((p) => Math.max(1, p - 1))}
+                disabled={custCurrentPage <= 1}
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Prev
+              </button>
+              <span className="font-mono">
+                {custCurrentPage} / {custTotalPages}
+              </span>
+              <button
+                onClick={() => setCustPage((p) => Math.min(custTotalPages, p + 1))}
+                disabled={custCurrentPage >= custTotalPages}
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION 5 — Invoice details */}
+        <div>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Invoice Details</h2>
+            <div className="relative print:hidden">
+              <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={invSearch}
+                onChange={(e) => {
+                  setInvSearch(e.target.value);
+                  setInvPage(1);
+                }}
+                placeholder="Search invoice or customer…"
+                className={`${inputClass} w-56 py-1.5 pl-8 text-xs`}
+              />
+            </div>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div className="max-h-[420px] overflow-auto print:max-h-none print:overflow-visible">
+              <table className="w-full min-w-[1000px] text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5">Invoice No.</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5">Customer</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5">Invoice Date</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5">Due Date</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5 text-right">Amount</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5 text-right">Paid</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5 text-right">Outstanding</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5 text-right">Days Overdue</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5">Bucket</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5">Terms</th>
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedInvoices.length === 0 ? (
+                    <tr>
+                      <td colSpan={11} className="px-4 py-8 text-center text-slate-400">
+                        No invoices match your search.
+                      </td>
+                    </tr>
+                  ) : (
+                    pagedInvoices.map((inv) => {
+                      const paid = inv.total - inv.outstanding;
+                      const overdue = daysOverdueLabel(asOf, inv.dueDate);
+                      const bucketLabel = inv.outstanding > 0.005 ? BUCKETS.find((b) => b.key === bucketFor(daysBetween(asOf, inv.dueDate)))?.label : "Paid";
+                      return (
+                        <tr key={inv.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                          <td className="px-4 py-2.5 font-mono font-medium text-slate-800">{inv.invoiceNo}</td>
+                          <td className="px-4 py-2.5 text-slate-700">{inv.customerName}</td>
+                          <td className="px-4 py-2.5 font-mono text-slate-600">{inv.invoiceDate}</td>
+                          <td className="px-4 py-2.5 font-mono text-slate-600">{inv.dueDate}</td>
+                          <td className="px-4 py-2.5 text-right font-mono tabular-nums text-slate-700">{money(inv.total)}</td>
+                          <td className="px-4 py-2.5 text-right font-mono tabular-nums text-emerald-700">{money(paid)}</td>
+                          <td className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums text-slate-900">{money(inv.outstanding)}</td>
+                          <td className={`px-4 py-2.5 text-right font-mono tabular-nums ${overdue.days > 0 ? "font-medium text-red-600" : "text-slate-500"}`}>{overdue.text}</td>
+                          <td className="px-4 py-2.5 text-slate-600">{bucketLabel}</td>
+                          <td className="px-4 py-2.5 font-mono text-slate-500">Net {inv.creditDays}d</td>
+                          <td className="px-4 py-2.5 text-center">
+                            <span className={`inline-block rounded border px-1.5 py-0.5 text-[10px] font-medium capitalize ${INVOICE_STATUS_STYLE[inv.status] ?? INVOICE_STATUS_STYLE.open}`}>
+                              {inv.status}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-xs text-slate-400 print:hidden">
+            <span className="font-mono">
+              Showing {pagedInvoices.length === 0 ? 0 : (invCurrentPage - 1) * invPageSize + 1}–{(invCurrentPage - 1) * invPageSize + pagedInvoices.length} of{" "}
+              {filteredInvoices.length}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setInvPage((p) => Math.max(1, p - 1))}
+                disabled={invCurrentPage <= 1}
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Prev
+              </button>
+              <span className="font-mono">
+                {invCurrentPage} / {invTotalPages}
+              </span>
+              <button
+                onClick={() => setInvPage((p) => Math.min(invTotalPages, p + 1))}
+                disabled={invCurrentPage >= invTotalPages}
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-400 print:hidden">
+            Sales Person is not tracked in this database, so that column is omitted rather than showing placeholder data.
+          </p>
+        </div>
+
+        {/* SECTION 6 — Top overdue customers */}
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Top 10 Overdue Customers</h2>
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-2.5">#</th>
+                  <th className="px-4 py-2.5">Customer</th>
+                  <th className="px-4 py-2.5 text-right">Outstanding</th>
+                  <th className="px-4 py-2.5 text-right">Days Overdue</th>
+                  <th className="px-4 py-2.5 text-center">Risk</th>
+                  <th className="px-4 py-2.5">Last Payment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {top10.map((r, i) => (
+                  <tr key={r.customerId} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                    <td className="px-4 py-2.5 font-mono text-slate-400">{i + 1}</td>
+                    <td className="px-4 py-2.5 font-medium text-slate-900">{r.name}</td>
+                    <td className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums text-slate-900">{money(r.total)}</td>
+                    <td className={`px-4 py-2.5 text-right font-mono tabular-nums ${r.daysOverdue > 0 ? "font-medium text-red-600" : "text-slate-400"}`}>
+                      {r.daysOverdue > 0 ? r.daysOverdue : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium ${FINANCE_STATUS[r.status].pill}`}>
+                        <Dot color={FINANCE_STATUS[r.status].bar} /> {RISK_DISPLAY_LABEL[r.status]}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{r.lastPayment ? formatDisplayDate(r.lastPayment) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* SECTION 7 — Collection analysis */}
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Collection Analysis</h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            <ReportStat label="Total Current Receivable" value={money(totalCurrentReceivable)} accentClass="text-emerald-700" />
+            <ReportStat label="Total Overdue Receivable" value={money(totalOverdueReceivable)} accentClass="text-red-700" />
+            <ReportStat label="Overdue %" value={`${overdueReceivablePct.toFixed(1)}%`} />
+            <ReportStat label="Avg Collection Days" value={`${avgCollectionDays.toFixed(0)} days`} />
+            <ReportStat label="Avg Invoice Value" value={money(avgInvoiceValue)} />
+            <ReportStat label="Highest Balance" value={money(highestBalance)} />
+            <ReportStat label="Lowest Balance" value={money(lowestBalance)} />
+            <ReportStat label="Collection Rate" value={`${collectionRate.toFixed(1)}%`} accentClass="text-emerald-700" />
+          </div>
+        </div>
+
+        {/* SECTION 8 — Risk analysis */}
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Risk Analysis</h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {(["current", "slightly", "attention", "critical", "severe"] as FinanceStatus[]).map((s) => (
+              <div key={s} className="rounded-xl border border-slate-200 bg-white p-4">
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium ${FINANCE_STATUS[s].pill}`}>
+                  <Dot color={FINANCE_STATUS[s].bar} /> {RISK_DISPLAY_LABEL[s]}
+                </span>
+                <p className="mt-2 font-mono text-lg font-semibold tabular-nums text-slate-900">{riskAnalysis[s].count}</p>
+                <p className="text-[11px] text-slate-400">customers</p>
+                <p className="mt-1 font-mono text-sm tabular-nums text-slate-600">{money(riskAnalysis[s].outstanding)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* SECTION 9 — Outstanding trend */}
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Outstanding Trend</h2>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6">
+              <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Monthly Outstanding Trend</p>
+              <MonthlyTrendChart data={monthlyTrend} />
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-6">
+              <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Ageing Distribution</p>
+              <DonutChart segments={donutSegments} total={grandTotal.total} hovered={hoveredBucket} onHover={setHoveredBucket} />
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-6">
+              <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Customer Concentration (Top 8)</p>
+              <div className="flex flex-col gap-2.5">
+                {concentration.map((c) => (
+                  <div key={c.name}>
+                    <div className="mb-1 flex items-center justify-between text-xs">
+                      <span className="truncate font-medium text-slate-700">{c.name}</span>
+                      <span className="font-mono tabular-nums text-slate-500">{c.pct.toFixed(1)}%</span>
+                    </div>
+                    <ProgressBar pct={c.pct} color="#2f6bff" height={6} />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-6">
+              <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Outstanding Trend (Last 7 Days)</p>
+              <MonthlyTrendChart data={dailyTrendData} />
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION 10 — Upcoming collections */}
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Upcoming Collections</h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Next 7 Days</p>
+              <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-slate-900">{money(upcoming.d7.sum)}</p>
+              <p className="text-[11px] text-slate-400">{upcoming.d7.count} invoice{upcoming.d7.count === 1 ? "" : "s"}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Next 15 Days</p>
+              <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-slate-900">{money(upcoming.d15.sum)}</p>
+              <p className="text-[11px] text-slate-400">{upcoming.d15.count} invoice{upcoming.d15.count === 1 ? "" : "s"}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Next 30 Days</p>
+              <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-slate-900">{money(upcoming.d30.sum)}</p>
+              <p className="text-[11px] text-slate-400">{upcoming.d30.count} invoice{upcoming.d30.count === 1 ? "" : "s"}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION 11 — Collection recommendations */}
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Collection Recommendations</h2>
+          <div className="rounded-2xl border border-slate-200 bg-white p-6">
+            <ul className="flex flex-col gap-3">
+              {recommendations.map((rec, i) => (
+                <li key={i} className="flex items-start gap-2.5 text-sm text-slate-700">
+                  <IconAlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+                  {rec}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        {/* SECTION 12 — Export note */}
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-xs text-slate-400 print:hidden">
+          Export Excel and Export CSV include every section above in a single file. This project has no XLSX-writing library installed, so
+          &quot;Export Excel&quot; produces one formatted workbook file rather than 8 separate worksheet tabs — open it in Excel to review all
+          sections.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ==================================================================================== */
 /* page                                                                                  */
 /* ==================================================================================== */
@@ -990,6 +1991,7 @@ export default function AgeingReportPage() {
   const [openCustomerId, setOpenCustomerId] = useState<string | null>(null);
   const [hoveredCol, setHoveredCol] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [detailedSummaryOpen, setDetailedSummaryOpen] = useState(false);
 
   const [colWidths, setColWidths] = useState<Record<string, number>>({
     customer: 240,
@@ -1404,6 +2406,7 @@ export default function AgeingReportPage() {
 
   return (
     <>
+    <div className={detailedSummaryOpen ? "print:hidden" : undefined}>
       <PageHeader
         title="AR Ageing"
         subtitle={`Outstanding as of ${formatDisplayDate(asOf)}, bucketed by days overdue.`}
@@ -1666,6 +2669,13 @@ export default function AgeingReportPage() {
                 <IconPrinter className="h-4 w-4" />
                 Print / PDF
               </button>
+              <button
+                onClick={() => setDetailedSummaryOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+              >
+                <IconReport className="h-4 w-4" />
+                Detailed Summary
+              </button>
             </div>
           </div>
 
@@ -1927,6 +2937,24 @@ export default function AgeingReportPage() {
           onClose={() => setOpenCustomerId(null)}
         />
       )}
+    </div>
+
+    {detailedSummaryOpen && (
+      <DetailedSummaryReport
+        rows={rows}
+        grandTotal={grandTotal}
+        asOf={asOf}
+        trend={trend}
+        monthlyTrend={monthlyTrend}
+        receiptsByCustomer={receiptsByCustomer}
+        avgPaymentDaysByCustomer={avgPaymentDaysByCustomer}
+        totalInvoicedAll={totalInvoicedAll}
+        totalCollectedAll={totalCollectedAll}
+        collectionRate={collectionRate}
+        avgOutstandingAge={avgOutstandingAge}
+        onClose={() => setDetailedSummaryOpen(false)}
+      />
+    )}
     </>
   );
 }
