@@ -20,7 +20,7 @@ const GROUPS: NavGroup[] = [
     title: "Overview",
     items: [
       { href: "/", label: "Home", icon: "home", built: true },
-      { href: "/dashboard", label: "Dashboard", icon: "grid", built: false },
+      { href: "/dashboard", label: "Dashboard", icon: "grid", built: true },
     ],
   },
   {
@@ -44,7 +44,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { href: "/reports/statement", label: "Customer Statement", icon: "file-text", built: true },
       { href: "/reports/ageing", label: "AR Ageing", icon: "scale", built: false },
-      { href: "/cashflow", label: "Cashflow", icon: "trending-up", built: false },
+      { href: "/cashflow", label: "Cashflow", icon: "trending-up", built: true },
     ],
   },
 ];

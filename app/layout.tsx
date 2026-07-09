@@ -10,8 +10,13 @@ export const metadata: Metadata = {
   description: "Accounts Receivable manager",
 };
 
-// Apply the saved theme before paint so there's no light/dark flash.
-const themeScript = `(function(){try{var t=localStorage.getItem('erp_theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.classList.add('dark');}}catch(e){}})();`;
+/*
+  Apply the saved theme before paint so there's no light/dark flash. Only ever
+  switch to dark when the user explicitly opted in via ThemeToggle — most
+  screens aren't styled with dark: variants yet, so following the OS
+  preference here would silently break their layout.
+*/
+const themeScript = `(function(){try{if(localStorage.getItem('erp_theme')==='dark'){document.documentElement.classList.add('dark');}}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
