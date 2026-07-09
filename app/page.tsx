@@ -29,7 +29,7 @@ const ROADMAP = [
 
 export default function HomePage() {
   return (
-    <>
+    <div className="p-6">
       <PageHeader
         title="Welcome — let's build the AR Manager"
         subtitle="Nothing here is pre-built. You build every screen, one at a time."
@@ -71,6 +71,6 @@ export default function HomePage() {
       <p className="mt-6 text-sm text-slate-500">
         Ready? Tell Claude Code: <span className="font-medium text-slate-700">&ldquo;build the Sign In screen.&rdquo;</span>
       </p>
-    </>
+    </div>
   );
 }

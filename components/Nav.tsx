@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
+import { signOut } from "@/lib/auth";
 
 /*
   Left sidebar — collapsible, icon-led, with section groups, an active "glow",
-  and notification badges. Only Home + GL Master are built; the rest show as the
-  roadmap the team fills in (flip `built` + set `href` when a screen lands).
+  and notification badges. Flip `built` + set `href` when a screen lands. Sign
+  In is the front-door gate, not an in-app page, so it isn't listed here — use
+  the Sign out button in the footer instead.
 */
 
 type NavItem = { href: string; label: string; icon: string; built: boolean; badge?: number };
@@ -33,7 +35,7 @@ const GROUPS: NavGroup[] = [
     title: "Transactions",
     items: [
       { href: "/invoices", label: "Sales Invoices", icon: "receipt", built: false },
-      { href: "/receipts", label: "Receipt Entry", icon: "wallet", built: false },
+      { href: "/receipts", label: "Receipt Entry", icon: "wallet", built: true },
       { href: "/upload", label: "Upload Report", icon: "upload", built: false },
       { href: "/reminders", label: "AR Followup", icon: "bell", built: false, badge: 3 },
     ],
@@ -46,14 +48,11 @@ const GROUPS: NavGroup[] = [
       { href: "/cashflow", label: "Cashflow", icon: "trending-up", built: false },
     ],
   },
-  {
-    title: "Account",
-    items: [{ href: "/signin", label: "Sign In", icon: "lock", built: false }],
-  },
 ];
 
 export function Nav() {
   const pathname = usePathname();
+  const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [ready, setReady] = useState(false);
 
@@ -69,6 +68,11 @@ export function Nav() {
       return next;
     });
   };
+
+  function handleSignOut() {
+    signOut();
+    router.push("/signin");
+  }
 
   return (
     <nav
@@ -164,6 +168,18 @@ export function Nav() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Sign out */}
+      <div className="border-t border-slate-100 p-3 dark:border-slate-800">
+        <button
+          onClick={handleSignOut}
+          title={collapsed ? "Sign out" : undefined}
+          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+        >
+          <Icon name="lock" className="h-[18px] w-[18px] flex-none" />
+          {!collapsed && <span>Sign out</span>}
+        </button>
       </div>
 
       {/* Collapse toggle */}
