@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
+import { logout } from "@/lib/auth";
 
 /*
   Left sidebar — collapsible, icon-led, with section groups, an active "glow",
-  and notification badges. Only Home + GL Master are built; the rest show as the
-  roadmap the team fills in (flip `built` + set `href` when a screen lands).
+  and notification badges. Sign In, Customer Master, GL Accounts and AR Followup
+  are built; the rest show as the roadmap the team fills in (flip `built` + set
+  `href` when a screen lands).
 */
 
 type NavItem = { href: string; label: string; icon: string; built: boolean; badge?: number };
@@ -25,7 +27,7 @@ const GROUPS: NavGroup[] = [
   {
     title: "Masters",
     items: [
-      { href: "/masters/customers", label: "Customers", icon: "users", built: false },
+      { href: "/masters/customers", label: "Customers", icon: "users", built: true },
       { href: "/masters/gl", label: "GL Accounts", icon: "bank", built: true },
     ],
   },
@@ -35,7 +37,7 @@ const GROUPS: NavGroup[] = [
       { href: "/invoices", label: "Sales Invoices", icon: "receipt", built: false },
       { href: "/receipts", label: "Receipt Entry", icon: "wallet", built: false },
       { href: "/upload", label: "Upload Report", icon: "upload", built: false },
-      { href: "/reminders", label: "AR Followup", icon: "bell", built: false, badge: 3 },
+      { href: "/reminders", label: "AR Followup", icon: "bell", built: true },
     ],
   },
   {
@@ -48,12 +50,13 @@ const GROUPS: NavGroup[] = [
   },
   {
     title: "Account",
-    items: [{ href: "/signin", label: "Sign In", icon: "lock", built: false }],
+    items: [{ href: "/signin", label: "Sign In", icon: "lock", built: true }],
   },
 ];
 
 export function Nav() {
   const pathname = usePathname();
+  const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [ready, setReady] = useState(false);
 
@@ -69,6 +72,13 @@ export function Nav() {
       return next;
     });
   };
+
+  if (pathname === "/signin") return null;
+
+  function handleSignOut() {
+    logout();
+    router.push("/signin");
+  }
 
   return (
     <nav
@@ -164,6 +174,18 @@ export function Nav() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Sign out */}
+      <div className="border-t border-slate-100 px-3 pt-3 dark:border-slate-800">
+        <button
+          onClick={handleSignOut}
+          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+          title={collapsed ? "Sign out" : undefined}
+        >
+          <Icon name="log-out" className="h-[18px] w-[18px] flex-none" />
+          {!collapsed && <span>Sign out</span>}
+        </button>
       </div>
 
       {/* Collapse toggle */}

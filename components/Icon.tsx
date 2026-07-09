@@ -69,6 +69,7 @@ const PATHS: Record<string, string> = {
   note: "M5 3h11l4 4v14H5zM15 3v5h5",
   save: "M5 3h12l3 3v15H5zM8 3v6h8V3M8 21v-7h8v7",
   reset: "M4 4v6h6M4 10a8 8 0 118 10",
+  "log-out": "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9",
   "chart-bar": "M4 20V10M10 20V4M16 20v-8M22 20H2",
 };
 
