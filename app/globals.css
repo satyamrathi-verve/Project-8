@@ -62,3 +62,10 @@ body {
 
 /* Frozen-column helper: subtle separating shadow */
 .freeze-shadow { box-shadow: 8px 0 12px -10px rgba(16,24,40,0.25); }
+
+/* Printable report pages: hide the sidebar/controls and let content flow across pages */
+@media print {
+  nav, .no-print { display: none !important; }
+  html, body { height: auto !important; overflow: visible !important; }
+  main { overflow: visible !important; }
+}

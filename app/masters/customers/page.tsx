@@ -130,7 +130,7 @@ export default function CustomerMasterPage() {
   ];
 
   return (
-    <>
+    <div className="p-6">
       <PageHeader
         title="Customer Master"
         subtitle="The reference list of customers every other screen leans on."
@@ -244,6 +244,6 @@ export default function CustomerMasterPage() {
           )}
         </>
       )}
-    </>
+    </div>
   );
 }

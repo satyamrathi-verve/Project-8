@@ -42,7 +42,7 @@ const GROUPS: NavGroup[] = [
   {
     title: "Reports",
     items: [
-      { href: "/reports/statement", label: "Customer Statement", icon: "file-text", built: false },
+      { href: "/reports/statement", label: "Customer Statement", icon: "file-text", built: true },
       { href: "/reports/ageing", label: "AR Ageing", icon: "scale", built: false },
       { href: "/cashflow", label: "Cashflow", icon: "trending-up", built: false },
     ],
