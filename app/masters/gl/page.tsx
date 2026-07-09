@@ -37,6 +37,9 @@ import { NotConfigured } from "@/components/NotConfigured";
 import { inputClass } from "@/components/FormField";
 import { useToast, Toaster } from "@/components/Toast";
 import { Donut, BarPair, Sparkline, TrendBars } from "@/components/MiniCharts";
+import { CommandPalette, type Command, type PaletteAccount } from "@/components/CommandPalette";
+import { ImportWizard, type ImportRow } from "@/components/ImportWizard";
+import { useRouter } from "next/navigation";
 
 /* =============================================================== *
  * Config
@@ -159,9 +162,22 @@ export default function GLMasterPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [view, setView] = useState<ViewMode>("grid");
+  const [split, setSplit] = useState(false);
   const [density, setDensity] = useState<Density>("comfortable");
   const [showAnalytics, setShowAnalytics] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set(TYPE_ORDER.map((t) => `type:${t}`)));
+
+  // extra filters
+  const [fDept, setFDept] = useState("");
+  const [fLoc, setFLoc] = useState("");
+  const [fCost, setFCost] = useState("");
+
+  // command palette + import wizard + bulk currency
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [bulkCurrencyOpen, setBulkCurrencyOpen] = useState(false);
+  const [bulkCurrency, setBulkCurrency] = useState("INR");
+  const router = useRouter();
 
   // columns
   const [order, setOrder] = useState<ColKey[]>(DEFAULT_ORDER);
@@ -235,6 +251,9 @@ export default function GLMasterPage() {
       const k = e.key.toLowerCase();
       if ((e.metaKey || e.ctrlKey) && k === "k") {
         e.preventDefault();
+        setPaletteOpen(true);
+      } else if (e.key === "/" && !e.metaKey && !e.ctrlKey && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
+        e.preventDefault();
         searchRef.current?.focus();
         setSearchOpen(true);
       } else if ((e.metaKey || e.ctrlKey) && k === "n") {
@@ -280,6 +299,9 @@ export default function GLMasterPage() {
   /* ---------------- derived ---------------- */
   const parentGroups = useMemo(() => Array.from(new Set(accounts.map((a) => a.parent_group).filter(Boolean) as string[])).sort(), [accounts]);
   const currencies = useMemo(() => Array.from(new Set(accounts.map((a) => a.meta.currency))).sort(), [accounts]);
+  const departments = useMemo(() => Array.from(new Set(accounts.map((a) => a.meta.department).filter(Boolean))).sort(), [accounts]);
+  const locations = useMemo(() => Array.from(new Set(accounts.map((a) => a.meta.location).filter(Boolean))).sort(), [accounts]);
+  const costCenters = useMemo(() => Array.from(new Set(accounts.map((a) => a.meta.cost_center).filter(Boolean))).sort(), [accounts]);
 
   const withinDays = (iso: string, days: string) => {
     if (!days) return true;
@@ -313,6 +335,9 @@ export default function GLMasterPage() {
     if (fSystem) rows = rows.filter((a) => a.meta.is_system === (fSystem === "yes"));
     if (fCreated) rows = rows.filter((a) => withinDays(a.meta.created_at, fCreated));
     if (fUpdated) rows = rows.filter((a) => withinDays(a.meta.updated_at, fUpdated));
+    if (fDept) rows = rows.filter((a) => a.meta.department === fDept);
+    if (fLoc) rows = rows.filter((a) => a.meta.location === fLoc);
+    if (fCost) rows = rows.filter((a) => a.meta.cost_center === fCost);
     if (favOnly) rows = rows.filter((a) => a.meta.favorite);
 
     const val = (a: EnrichedGLAccount, col: string): string | number => {
@@ -341,7 +366,7 @@ export default function GLMasterPage() {
       }
       return 0;
     });
-  }, [accounts, search, fType, fStatus, fGroup, fCurrency, fNormal, fPosting, fControl, fSystem, fCreated, fUpdated, favOnly, sorts]);
+  }, [accounts, search, fType, fStatus, fGroup, fCurrency, fNormal, fPosting, fControl, fSystem, fCreated, fUpdated, fDept, fLoc, fCost, favOnly, sorts]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -351,7 +376,7 @@ export default function GLMasterPage() {
     setPage(1);
     setActiveRow(-1);
     setLastClicked(-1);
-  }, [search, fType, fStatus, fGroup, fCurrency, fNormal, fPosting, fControl, fSystem, fCreated, fUpdated, favOnly, pageSize, view]);
+  }, [search, fType, fStatus, fGroup, fCurrency, fNormal, fPosting, fControl, fSystem, fCreated, fUpdated, fDept, fLoc, fCost, favOnly, pageSize, view]);
 
   const visibleCols = useMemo(() => order.filter((k) => visible[k]), [order, visible]);
 
@@ -363,15 +388,39 @@ export default function GLMasterPage() {
   }, [accounts]);
 
   const counts = useMemo(() => {
-    const c = { total: accounts.length, asset: 0, liability: 0, income: 0, expense: 0, equity: 0, inactive: 0, system: 0 };
+    const c = { total: accounts.length, asset: 0, liability: 0, income: 0, expense: 0, equity: 0, inactive: 0, system: 0, recentAdded: 0, recentUpdated: 0, pending: 0 };
+    const days30 = 30 * 86400000;
     accounts.forEach((a) => {
       c[a.type] += 1;
       if (classify(a).key === "equity") c.equity += 1;
       if (a.meta.status !== "active") c.inactive += 1;
       if (a.meta.is_system) c.system += 1;
+      if (Date.now() - new Date(a.meta.created_at).getTime() <= days30) c.recentAdded += 1;
+      if (Date.now() - new Date(a.meta.updated_at).getTime() <= days30) c.recentUpdated += 1;
+      if (a.meta.status === "archived") c.pending += 1;
     });
     return c;
   }, [accounts]);
+
+  // last updated + fiscal context
+  const lastUpdated = useMemo(() => {
+    if (!accounts.length) return null;
+    return accounts.reduce((m, a) => (a.meta.updated_at > m ? a.meta.updated_at : m), accounts[0].meta.updated_at);
+  }, [accounts]);
+  const fiscal = useMemo(() => {
+    const now = new Date();
+    const y = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1; // India FY Apr–Mar
+    return { year: `FY ${y}–${String((y + 1) % 100).padStart(2, "0")}`, period: now.toLocaleDateString("en-IN", { month: "long", year: "numeric" }) };
+  }, []);
+
+  // analytics: top parent groups, opening-balance distribution, recently modified
+  const topGroups = useMemo(() => {
+    const m = new Map<string, number>();
+    accounts.forEach((a) => { const g = a.parent_group ?? "Ungrouped"; m.set(g, (m.get(g) ?? 0) + 1); });
+    const palette = ["#2f6bff", "#8b5cf6", "#10b981", "#f59e0b", "#f43f5e"];
+    return Array.from(m.entries()).sort((x, y) => y[1] - x[1]).slice(0, 5).map(([label, value], i) => ({ label, value, color: palette[i % palette.length] }));
+  }, [accounts]);
+  const recentlyModified = useMemo(() => [...accounts].sort((a, b) => (a.meta.updated_at < b.meta.updated_at ? 1 : -1)).slice(0, 5), [accounts]);
 
   const donutData = useMemo(
     () => [
@@ -677,6 +726,18 @@ export default function GLMasterPage() {
     toast.success(`Moved ${ids.length} account${ids.length > 1 ? "s" : ""} to "${val ?? "Ungrouped"}"`);
     await fetchAccounts();
   };
+  const doBulkCurrency = () => {
+    const ids = selectedAccounts.map((a) => a.id);
+    ids.forEach((id) => saveMeta(id, { currency: bulkCurrency }));
+    setAccounts((prev) => prev.map((x) => (selected.has(x.id) ? { ...x, meta: { ...x.meta, currency: bulkCurrency } } : x)));
+    setBulkCurrencyOpen(false);
+    toast.success(`Set ${ids.length} account${ids.length > 1 ? "s" : ""} to ${bulkCurrency}`);
+  };
+  const copyRow = (a: EnrichedGLAccount) => {
+    const row = [a.code, a.name, classify(a).label, a.parent_group ?? "", a.meta.normal_balance, a.meta.opening_balance, a.meta.currency, a.meta.status].join("\t");
+    navigator.clipboard.writeText(row).then(() => toast.success("Row copied"), () => toast.error("Couldn't copy"));
+  };
+  const viewHistory = (a: EnrichedGLAccount) => { openDetails(a); setDetailTab("activity"); };
 
   /* ---------------- saved views ---------------- */
   const saveView = (name: string) => {
@@ -713,10 +774,13 @@ export default function GLMasterPage() {
     setFSystem("");
     setFCreated("");
     setFUpdated("");
+    setFDept("");
+    setFLoc("");
+    setFCost("");
     setFavOnly(false);
   };
   const activeFilterCount =
-    [fType, fStatus, fGroup, fCurrency, fNormal, fPosting, fControl, fSystem, fCreated, fUpdated].filter(Boolean).length + (favOnly ? 1 : 0);
+    [fType, fStatus, fGroup, fCurrency, fNormal, fPosting, fControl, fSystem, fCreated, fUpdated, fDept, fLoc, fCost].filter(Boolean).length + (favOnly ? 1 : 0);
 
   /* ---------------- search suggestions / recent ---------------- */
   const suggestions = useMemo(() => {
@@ -810,6 +874,59 @@ export default function GLMasterPage() {
     [openDetails, openEdit, openDuplicate, copyCode, togglePin, toggleFavorite, deactivate, askDelete, rowCheck],
   );
 
+  /* ---------------- import wizard ---------------- */
+  const existingCodes = useMemo(() => new Set(accounts.map((a) => a.code.toLowerCase())), [accounts]);
+  const handleWizardImport = async (rows: ImportRow[]): Promise<{ count: number; error?: string }> => {
+    if (!supabase) return { count: 0, error: "Not connected" };
+    if (!rows.length) return { count: 0 };
+    const { error } = await supabase.from("gl_accounts").insert(rows);
+    if (error) return { count: 0, error: error.message };
+    await fetchAccounts();
+    return { count: rows.length };
+  };
+
+  /* ---------------- command palette ---------------- */
+  const toggleTheme = () => {
+    const next = !document.documentElement.classList.contains("dark");
+    document.documentElement.classList.toggle("dark", next);
+    localStorage.setItem("gl_theme", next ? "dark" : "light");
+  };
+  const openByName = (needle: string) => {
+    const a = accounts.find((x) => x.name.toLowerCase().includes(needle));
+    if (a) openDetails(a);
+    else toast.info(`No account matching “${needle}”`);
+  };
+  const paletteAccounts: PaletteAccount[] = useMemo(
+    () => accounts.map((a) => { const c = classify(a); const tone = TYPE_TONE[c.key]; return { id: a.id, code: a.code, name: a.name, icon: c.icon, tone: tone.text, soft: tone.soft }; }),
+    [accounts],
+  );
+  const paletteCommands: Command[] = useMemo(() => {
+    const soon = (label: string) => () => toast.info(`${label} isn't built yet`);
+    return [
+      { id: "new", section: "Create", label: "Create Account", hint: "Ctrl N", icon: "plus", keywords: "add new account", run: openAdd },
+      { id: "open-cash", section: "Create", label: "Open Cash account", icon: "wallet", keywords: "cash", run: () => openByName("cash") },
+      { id: "open-bank", section: "Create", label: "Open Bank account", icon: "bank", keywords: "bank", run: () => openByName("bank") },
+      { id: "open-sales", section: "Create", label: "Open Sales / Revenue", icon: "trending-up", keywords: "sales revenue income", run: () => openByName("sales") },
+      { id: "nav-home", section: "Navigation", label: "Go to Home", icon: "home", keywords: "start", run: () => router.push("/") },
+      { id: "nav-gl", section: "Navigation", label: "Go to GL Accounts", icon: "bank", keywords: "ledger chart", run: () => {} },
+      { id: "nav-cust", section: "Navigation", label: "Go to Customers", icon: "users", keywords: "customer master", run: soon("Customers") },
+      { id: "nav-inv", section: "Navigation", label: "Go to Invoices", icon: "receipt", keywords: "sales invoice", run: soon("Invoices") },
+      { id: "nav-rcpt", section: "Navigation", label: "Go to Receipts", icon: "wallet", keywords: "receipt payment", run: soon("Receipts") },
+      { id: "nav-rep", section: "Navigation", label: "Go to Reports", icon: "file-text", keywords: "ageing statement", run: soon("Reports") },
+      { id: "cmd-excel", section: "Commands", label: "Export to Excel", icon: "chart-bar", keywords: "download xls", run: () => exportExcel(filtered) },
+      { id: "cmd-csv", section: "Commands", label: "Export to CSV", icon: "download", keywords: "download", run: () => exportCsv(filtered) },
+      { id: "cmd-import", section: "Commands", label: "Import CSV…", icon: "upload", keywords: "wizard upload", run: () => setWizardOpen(true) },
+      { id: "cmd-print", section: "Commands", label: "Print", icon: "printer", keywords: "", run: () => window.print() },
+      { id: "cmd-grid", section: "Commands", label: "Switch to Grid view", icon: "columns", keywords: "table", run: () => setView("grid") },
+      { id: "cmd-tree", section: "Commands", label: "Switch to Tree view", icon: "layers", keywords: "hierarchy chart of accounts", run: () => setView("tree") },
+      { id: "cmd-split", section: "Commands", label: "Toggle Split view", icon: "panel-left", keywords: "detail dock", run: () => setSplit((s) => !s) },
+      { id: "cmd-refresh", section: "Commands", label: "Refresh", icon: "refresh", keywords: "reload", run: () => fetchAccounts(true) },
+      { id: "cmd-settings", section: "Commands", label: "Open Settings", icon: "save", keywords: "preferences density", run: () => setSettingsOpen(true) },
+      { id: "cmd-theme", section: "Commands", label: "Toggle dark mode", icon: "moon", keywords: "theme light", run: toggleTheme },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts, filtered]);
+
   /* =============================================================== *
    * Render
    * =============================================================== */
@@ -843,9 +960,36 @@ export default function GLMasterPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => setPaletteOpen(true)} className="hidden items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-500 transition-colors hover:bg-slate-50 md:inline-flex dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800" title="Command palette · Ctrl K">
+              <Icon name="search" className="h-4 w-4" /> <span className="text-slate-400">Search…</span>
+              <kbd className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-400 dark:border-slate-600 dark:bg-slate-900">Ctrl K</kbd>
+            </button>
             <ViewToggle view={view} setView={setView} />
+            <button onClick={() => setSplit((s) => !s)} title="Split view (details beside grid)" aria-pressed={split} className={`hidden h-9 w-9 items-center justify-center rounded-lg border transition-colors lg:inline-flex ${split ? "border-brand/40 bg-blue-50 text-brand dark:bg-brand/10" : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
+              <Icon name="panel-left" className="h-[18px] w-[18px]" />
+            </button>
             <ThemeToggle />
           </div>
+        </div>
+
+        {/* meta strip: company · fiscal year · period · last updated */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-6 pb-2 text-xs text-slate-500 dark:text-slate-400">
+          <Popover panelClass="w-56" button={(o) => (
+            <button className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-medium transition-colors ${o ? "bg-slate-100 dark:bg-slate-800" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}>
+              <Icon name="building" className="h-3.5 w-3.5 text-slate-400" /> Verve Advisory Pvt Ltd <Icon name="chevron-down" className="h-3 w-3 opacity-60" />
+            </button>
+          )}>
+            {(close) => (
+              <div>
+                <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Company</p>
+                <button onClick={close} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-brand hover:bg-slate-100 dark:hover:bg-slate-700"><Icon name="check" className="h-4 w-4" /> Verve Advisory Pvt Ltd</button>
+                <p className="px-2.5 py-2 text-xs text-slate-400">Single-entity demo. Multi-company coming with consolidation.</p>
+              </div>
+            )}
+          </Popover>
+          <span className="inline-flex items-center gap-1.5"><Icon name="calendar" className="h-3.5 w-3.5 text-slate-400" /> {fiscal.year}</span>
+          <span className="inline-flex items-center gap-1.5"><Icon name="book" className="h-3.5 w-3.5 text-slate-400" /> Period: {fiscal.period}</span>
+          {lastUpdated && <span className="inline-flex items-center gap-1.5"><Icon name="refresh" className="h-3.5 w-3.5 text-slate-400" /> Updated {formatDate(lastUpdated)}</span>}
         </div>
 
         {/* ERP ribbon */}
@@ -855,7 +999,7 @@ export default function GLMasterPage() {
           <RibbonButton icon="duplicate" label="Duplicate" disabled={!primaryAccount} onClick={() => primaryAccount && openDuplicate(primaryAccount)} />
           <RibbonButton icon="trash" label="Delete" disabled={!primaryAccount} onClick={() => primaryAccount && askDelete(primaryAccount)} />
           <RibbonDivider />
-          <RibbonButton icon="upload" label="Import" onClick={() => importRef.current?.click()} />
+          <RibbonButton icon="upload" label="Import" onClick={() => setWizardOpen(true)} />
           <RibbonButton icon="chart-bar" label="Excel" onClick={() => exportExcel(filtered)} />
           <RibbonButton icon="download" label="CSV" onClick={() => exportCsv(filtered)} />
           <RibbonButton icon="printer" label="Print" onClick={() => window.print()} />
@@ -868,14 +1012,20 @@ export default function GLMasterPage() {
       <input ref={importRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ""; }} />
 
       <div className="space-y-5 p-6">
-        {/* ============ Summary cards ============ */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        {/* ============ KPI dashboard ============ */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
           <SummaryCard label="Total Accounts" value={counts.total} icon="ledger" hex="#64748b" idx={0} />
           <SummaryCard label="Assets" value={counts.asset} icon="coins" hex={TYPE_HEX.asset} idx={1} />
           <SummaryCard label="Liabilities" value={counts.liability} icon="book" hex={TYPE_HEX.liability} idx={2} />
           <SummaryCard label="Equity" value={counts.equity} icon="scale" hex={TYPE_HEX.equity} idx={3} />
           <SummaryCard label="Income" value={counts.income} icon="trending-up" hex={TYPE_HEX.income} idx={4} />
           <SummaryCard label="Expense" value={counts.expense} icon="trending-down" hex={TYPE_HEX.expense} idx={5} />
+          <SummaryCard label="System Accounts" value={counts.system} icon="lock" hex="#8b5cf6" idx={6} />
+          <SummaryCard label="Inactive" value={counts.inactive} icon="alert" hex="#f59e0b" idx={7} />
+          <SummaryCard label="Recently Added" value={counts.recentAdded} icon="plus" hex="#06b6d4" idx={8} />
+          <SummaryCard label="Recently Updated" value={counts.recentUpdated} icon="edit" hex="#10b981" idx={9} />
+          <SummaryCard label="Pending Approval" value={counts.pending} icon="activity" hex="#f43f5e" idx={10} />
+          <SummaryCard label="Favourites" value={accounts.filter((a) => a.meta.favorite).length} icon="star" hex="#eab308" idx={11} />
         </div>
 
         {/* ============ Analytics ============ */}
@@ -903,6 +1053,23 @@ export default function GLMasterPage() {
                   </AnalyticsTile>
                   <AnalyticsTile title="Monthly Account Creation">
                     <TrendBars points={trendPoints} labels={trendLabels} color="#2f6bff" />
+                  </AnalyticsTile>
+                  <AnalyticsTile title="Opening Balance Distribution">
+                    <BarPair rows={[{ label: "Assets", value: money.asset, color: TYPE_HEX.asset }, { label: "Liabilities", value: money.liability, color: TYPE_HEX.liability }, { label: "Income", value: money.income, color: TYPE_HEX.income }, { label: "Expense", value: money.expense, color: TYPE_HEX.expense }]} format={(n) => compactMoney(n)} />
+                  </AnalyticsTile>
+                  <AnalyticsTile title="Top Parent Groups">
+                    {topGroups.length ? <BarPair rows={topGroups} format={(n) => `${n}`} /> : <p className="text-xs text-slate-400">No groups yet.</p>}
+                  </AnalyticsTile>
+                  <AnalyticsTile title="Recently Modified">
+                    <ul className="space-y-2">
+                      {recentlyModified.map((a) => (
+                        <li key={a.id} className="flex items-center gap-2 text-xs">
+                          <span className={`flex h-6 w-6 flex-none items-center justify-center rounded-md ${TYPE_TONE[classify(a).key].soft} ${TYPE_TONE[classify(a).key].text}`}><Icon name={classify(a).icon} className="h-3 w-3" /></span>
+                          <button onClick={() => openDetails(a)} className="min-w-0 flex-1 truncate text-left font-medium text-slate-700 hover:text-brand dark:text-slate-200">{a.name}</button>
+                          <span className="flex-none text-slate-400">{formatDate(a.meta.updated_at)}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </AnalyticsTile>
                 </div>
               </motion.div>
@@ -992,6 +1159,9 @@ export default function GLMasterPage() {
             <FilterChip icon="edit" label="Posting" value={fPosting ? (fPosting === "yes" ? "Allowed" : "Blocked") : ""} options={YESNO} onSelect={setFPosting} />
             <FilterChip icon="book" label="Control A/c" value={fControl ? (fControl === "yes" ? "Yes" : "No") : ""} options={YESNO} onSelect={setFControl} />
             <FilterChip icon="lock" label="System" value={fSystem ? (fSystem === "yes" ? "Yes" : "No") : ""} options={YESNO} onSelect={setFSystem} />
+            <FilterChip icon="briefcase" label="Dept" value={fDept} options={[{ value: "", label: "All departments" }, ...departments.map((d) => ({ value: d, label: d }))]} onSelect={setFDept} />
+            <FilterChip icon="map-pin" label="Location" value={fLoc} options={[{ value: "", label: "All locations" }, ...locations.map((l) => ({ value: l, label: l }))]} onSelect={setFLoc} />
+            <FilterChip icon="hash" label="Cost Center" value={fCost} options={[{ value: "", label: "All cost centers" }, ...costCenters.map((c) => ({ value: c, label: c }))]} onSelect={setFCost} />
             <FilterChip icon="calendar" label="Created" value={DATE_PRESETS.find((d) => d.value === fCreated && d.value)?.label ?? ""} options={DATE_PRESETS} onSelect={setFCreated} />
             <FilterChip icon="calendar" label="Updated" value={DATE_PRESETS.find((d) => d.value === fUpdated && d.value)?.label ?? ""} options={DATE_PRESETS} onSelect={setFUpdated} />
             <button onClick={() => setFavOnly((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${favOnly ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300" : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
@@ -1024,6 +1194,7 @@ export default function GLMasterPage() {
                 <BulkBtn icon="check" label="Activate" onClick={() => bulkSetStatus("active")} />
                 <BulkBtn icon="alert" label="Deactivate" onClick={() => bulkSetStatus("inactive")} />
                 <BulkBtn icon="layers" label="Change Parent" onClick={() => { setParentChangeValue(""); setParentChangeOpen(true); }} />
+                <BulkBtn icon="coins" label="Currency" onClick={() => setBulkCurrencyOpen(true)} />
                 <BulkBtn icon="download" label="Export" onClick={() => exportCsv(selectedAccounts)} />
                 <BulkBtn icon="printer" label="Print" onClick={() => window.print()} />
                 <BulkBtn icon="trash" label="Delete" danger onClick={() => setBulkDeleteOpen(true)} />
@@ -1032,10 +1203,12 @@ export default function GLMasterPage() {
           )}
         </AnimatePresence>
 
-        {/* ============ Grid / Tree ============ */}
+        {/* ============ Grid / Tree (+ split details) ============ */}
+        <div className={split && detailAccount ? "flex items-start gap-5" : ""}>
+        <div className={split && detailAccount ? "min-w-0 flex-1" : ""}>
         {view === "grid" ? (
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card dark:border-slate-800 dark:bg-slate-900">
-            <div ref={gridRef} tabIndex={0} onKeyDown={onGridKey} aria-label="GL accounts grid" className="max-h-[calc(100vh-200px)] overflow-auto scroll-thin outline-none focus:ring-2 focus:ring-inset focus:ring-brand/20">
+            <div ref={gridRef} tabIndex={0} onKeyDown={onGridKey} aria-label="GL accounts grid" className={`${split && detailAccount ? "max-h-[calc(100vh-260px)]" : "max-h-[calc(100vh-200px)]"} overflow-auto scroll-thin outline-none focus:ring-2 focus:ring-inset focus:ring-brand/20`}>
               <table className="w-full border-collapse text-sm" style={{ minWidth: 720 }}>
                 <thead className="sticky top-0 z-20">
                   <tr className="bg-slate-50/95 text-left shadow-[0_1px_0_rgba(0,0,0,0.06)] backdrop-blur dark:bg-slate-800/95">
@@ -1102,6 +1275,23 @@ export default function GLMasterPage() {
             hasAny={accounts.length > 0}
           />
         )}
+        </div>
+        {split && detailAccount && (
+          <aside className="hidden w-[420px] flex-none lg:block">
+            <div className="sticky top-[196px] flex h-[calc(100vh-216px)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card dark:border-slate-800 dark:bg-slate-900">
+              <DetailsPanel
+                a={detailAccount}
+                tab={detailTab}
+                setTab={setDetailTab}
+                onClose={() => setDetailsId(null)}
+                onEdit={() => { const acc = detailAccount; setDetailsId(null); openEdit(acc); }}
+                onCopy={() => copyCode(detailAccount.code)}
+                onSaveNotes={(text) => { saveMeta(detailAccount.id, { description: text }); patchLocal(detailAccount.id, { description: text }); toast.success("Notes saved"); }}
+              />
+            </div>
+          </aside>
+        )}
+        </div>
 
         {/* recent chips */}
         {recentIds.length > 0 && !loading && (
@@ -1128,7 +1318,7 @@ export default function GLMasterPage() {
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.96 }}
               transition={{ duration: 0.12 }}
-              style={{ top: Math.min(ctxMenu.y, window.innerHeight - 340), left: Math.min(ctxMenu.x, window.innerWidth - 200) }}
+              style={{ top: Math.min(ctxMenu.y, window.innerHeight - 470), left: Math.min(ctxMenu.x, window.innerWidth - 200) }}
               className="fixed z-[70] w-48 rounded-xl border border-slate-200 bg-white p-1.5 shadow-float dark:border-slate-700 dark:bg-slate-800"
               onClick={(e) => e.stopPropagation()}
             >
@@ -1136,8 +1326,13 @@ export default function GLMasterPage() {
               <MenuItem icon="edit" label="Edit" onClick={() => { openEdit(a); setCtxMenu(null); }} />
               <MenuItem icon="duplicate" label="Duplicate" onClick={() => { openDuplicate(a); setCtxMenu(null); }} />
               <MenuItem icon="copy" label="Copy code" onClick={() => { copyCode(a.code); setCtxMenu(null); }} />
+              <MenuItem icon="ledger" label="Copy row" onClick={() => { copyRow(a); setCtxMenu(null); }} />
               <MenuItem icon={a.meta.pinned ? "pin-filled" : "pin"} label={a.meta.pinned ? "Unpin" : "Pin"} onClick={() => { togglePin(a); setCtxMenu(null); }} />
               <MenuItem icon={a.meta.favorite ? "star-filled" : "star"} label={a.meta.favorite ? "Unfavourite" : "Favourite"} onClick={() => { toggleFavorite(a); setCtxMenu(null); }} />
+              <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
+              <MenuItem icon="activity" label="View history" onClick={() => { viewHistory(a); setCtxMenu(null); }} />
+              <MenuItem icon="download" label="Export" onClick={() => { exportCsv([a]); setCtxMenu(null); }} />
+              <MenuItem icon="printer" label="Print" onClick={() => { window.print(); setCtxMenu(null); }} />
               <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
               <MenuItem icon="alert" label="Deactivate" onClick={() => { deactivate(a); setCtxMenu(null); }} />
               <MenuItem icon="trash" label="Delete" danger onClick={() => { askDelete(a); setCtxMenu(null); }} />
@@ -1151,8 +1346,8 @@ export default function GLMasterPage() {
         <AddEditPanel form={form} setForm={setForm} errors={errors} editing={editingId != null} initialForm={initialForm} dirty={dirty} saving={saving} onCancel={requestCloseForm} onSave={handleSave} />
       </MotionDrawer>
 
-      {/* ============ Details ============ */}
-      <MotionDrawer open={detailAccount != null} onClose={() => setDetailsId(null)} widthClass="w-[560px]" ariaLabel="Account details">
+      {/* ============ Details (drawer when not split-docked) ============ */}
+      <MotionDrawer open={detailAccount != null && !split} onClose={() => setDetailsId(null)} widthClass="w-[560px]" ariaLabel="Account details">
         {detailAccount && (
           <DetailsPanel
             a={detailAccount}
@@ -1190,8 +1385,18 @@ export default function GLMasterPage() {
         <button onClick={() => { setConfirmDiscard(false); setFormOpen(false); }} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Discard</button>
       </>} />
 
+      <Modal isOpen={bulkCurrencyOpen} title={`Set currency for ${selected.size} account${selected.size > 1 ? "s" : ""}`} description="Update the reporting currency for all selected accounts." size="md" icon={<span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-blue-50 text-brand dark:bg-brand/15"><Icon name="coins" className="h-5 w-5" /></span>} onClose={() => setBulkCurrencyOpen(false)} footer={<>
+        <button onClick={() => setBulkCurrencyOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+        <button onClick={doBulkCurrency} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark">Apply</button>
+      </>}>
+        <select value={bulkCurrency} onChange={(e) => setBulkCurrency(e.target.value)} className={`${inputClass} w-full`}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select>
+      </Modal>
+
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} density={density} setDensity={setDensity} showAnalytics={showAnalytics} setShowAnalytics={setShowAnalytics} pageSize={pageSize} setPageSize={setPageSize} onResetColumns={resetColumns} />
       <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} accounts={paletteAccounts} onOpenAccount={(id) => { const a = accounts.find((x) => x.id === id); if (a) openDetails(a); }} />
+      <ImportWizard open={wizardOpen} onClose={() => setWizardOpen(false)} existingCodes={existingCodes} onImport={handleWizardImport} />
 
       <Toaster toasts={toast.toasts} onDismiss={toast.dismiss} />
     </div>
@@ -1981,24 +2186,47 @@ function NotesTab({ a, onSave }: { a: EnrichedGLAccount; onSave: (t: string) => 
     </div>
   );
 }
+const AVATAR_HUES = ["#2f6bff", "#8b5cf6", "#10b981", "#f59e0b", "#f43f5e", "#06b6d4"];
+function initialsOf(name: string) { return name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "?"; }
+function hueOf(name: string) { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0; return AVATAR_HUES[h % AVATAR_HUES.length]; }
+function bucketOf(iso: string): string {
+  const d = new Date(iso).getTime();
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const today = start.getTime();
+  if (d >= today) return "Today";
+  if (d >= today - 86400000) return "Yesterday";
+  if (d >= today - 7 * 86400000) return "Last week";
+  return "Earlier";
+}
 function ActivityTab({ a }: { a: EnrichedGLAccount }) {
-  const items = [
-    { icon: "eye", title: "Viewed", by: "You", at: new Date().toISOString() },
-    { icon: "edit", title: "Last updated", by: a.meta.updated_by, at: a.meta.updated_at },
-    { icon: "plus", title: "Account created", by: a.meta.created_by, at: a.meta.created_at },
+  const events = [
+    { title: "viewed this account", by: "You", at: new Date().toISOString() },
+    { title: "updated account details", by: a.meta.updated_by || "System", at: a.meta.updated_at },
+    { title: "created this account", by: a.meta.created_by || "System", at: a.meta.created_at },
   ];
+  const order = ["Today", "Yesterday", "Last week", "Earlier"];
+  const groups = order
+    .map((label) => ({ label, items: events.filter((e) => bucketOf(e.at) === label) }))
+    .filter((g) => g.items.length);
   return (
-    <ol className="space-y-4">
-      {items.map((it, i) => (
-        <li key={i} className="relative flex gap-3 pl-1">
-          <div className="flex flex-col items-center">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"><Icon name={it.icon} className="h-3.5 w-3.5" /></span>
-            {i < items.length - 1 && <span className="mt-1 w-px flex-1 bg-slate-200 dark:bg-slate-700" />}
-          </div>
-          <div className="pb-2"><p className="text-sm font-medium text-slate-800 dark:text-slate-100">{it.title}</p><p className="text-xs text-slate-500 dark:text-slate-400">by {it.by} · {formatDateTime(it.at)}</p></div>
-        </li>
+    <div className="space-y-5">
+      {groups.map((g) => (
+        <div key={g.label}>
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{g.label}</p>
+          <ol className="space-y-3">
+            {g.items.map((it, i) => (
+              <li key={i} className="flex items-start gap-3">
+                <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: hueOf(it.by) }}>{initialsOf(it.by)}</span>
+                <div className="min-w-0">
+                  <p className="text-sm text-slate-700 dark:text-slate-200"><span className="font-semibold text-slate-900 dark:text-white">{it.by}</span> {it.title}</p>
+                  <p className="text-xs text-slate-400">{formatDateTime(it.at)}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
       ))}
-    </ol>
+    </div>
   );
 }
 function ModuleEmpty({ icon, title, body }: { icon: string; title: string; body: string }) {
