@@ -43,6 +43,8 @@ export interface GLMeta {
   // personalisation
   favorite: boolean;
   pinned: boolean;
+  /** True when opening_balance below is a live subledger total, not a manually entered figure. */
+  balance_is_live: boolean;
   // audit
   created_by: string;
   created_at: string;
@@ -53,7 +55,10 @@ export interface GLMeta {
 /** An account joined with its client-side metadata — what screens actually render. */
 export type EnrichedGLAccount = GLAccount & { meta: GLMeta };
 
-const META_KEY = "gl_meta_v2";
+// v3: dropped the fake hash-derived opening balance in favour of real, live
+// subledger totals for control accounts — bumped so browsers with stale v2
+// data (fabricated balances) start clean instead of keeping the fake numbers.
+const META_KEY = "gl_meta_v3";
 const RECENT_KEY = "gl_recent_v1";
 const VIEWS_KEY = "gl_views_v1";
 const CURRENT_USER = "You";
@@ -99,15 +104,21 @@ export function classify(acc: GLAccount): DisplayType {
         return { key: "fixed", label: "Fixed Asset", base: "asset", icon: "building" };
       return { key: "asset", label: "Asset", base: "asset", icon: "coins" };
     case "liability":
-      if (has(/payable|creditor/)) return { key: "payable", label: "Accounts Payable", base: "liability", icon: "receipt" };
+      // GST/tax check runs first: a name like "Output GST Payable" contains
+      // both "gst" and "payable" — it's a duties-and-taxes account, not a
+      // vendor payable, so the more specific match must win.
       if (has(/gst|tax|vat|duty|tds/)) return { key: "tax", label: "Tax Payable", base: "liability", icon: "hash" };
+      if (has(/payable|creditor/)) return { key: "payable", label: "Accounts Payable", base: "liability", icon: "receipt" };
       if (has(/equity|capital|retained|owner|reserve/))
         return { key: "equity", label: "Equity", base: "liability", icon: "scale" };
       return { key: "liability", label: "Liability", base: "liability", icon: "book" };
     case "income":
       return { key: "income", label: "Income", base: "income", icon: "trending-up" };
     case "expense":
-      if (has(/cost of goods|cogs|direct|freight|purchase|carriage/))
+      // \bdirect\b, not "direct" — otherwise "Indirect Expenses" (which
+      // contains "direct" as a substring) wrongly matches and every expense
+      // parked under it gets mislabelled Cost of Goods Sold.
+      if (has(/cost of goods|cogs|\bdirect\b|freight|purchase|carriage/))
         return { key: "cogs", label: "Cost of Goods Sold", base: "expense", icon: "layers" };
       return { key: "expense", label: "Expense", base: "expense", icon: "trending-down" };
   }
@@ -156,19 +167,58 @@ export function gstOf(key: DisplayTypeKey): GSTCategory {
 }
 
 /* ------------------------------------------------------------------ *
- * Deterministic demo opening balance (stable across refreshes)
+ * Live control-account balances — real numbers from the real subledgers
+ * (invoices, receipts, customers), not placeholder data. A handful of
+ * accounts are "control accounts": the ledger doesn't hold their balance
+ * directly, it's the total of a subledger (AR = the sum of what every
+ * customer owes; Bank/Cash = money actually received; GST Payable = tax
+ * actually collected on invoices). Computing these live is what makes
+ * the chart of accounts trustworthy instead of decorative.
  * ------------------------------------------------------------------ */
 
-function seedFromCode(code: string): number {
-  let h = 0;
-  for (let i = 0; i < code.length; i++) h = (h * 31 + code.charCodeAt(i)) >>> 0;
-  return h;
+export interface LedgerAggregates {
+  /** customers.opening_balance + invoices.total − receipt_allocations.amount, summed across everyone. */
+  debtorsBalance: number;
+  /** receipts.amount where mode is neft/upi/cheque (anything that lands in a bank account). */
+  bankBalance: number;
+  /** receipts.amount where mode is cash. */
+  cashBalance: number;
+  /** invoices.tax_amount, summed — GST collected on sales, owed to the government. */
+  taxPayable: number;
 }
 
-function derivedOpeningBalance(acc: GLAccount): number {
-  const seed = seedFromCode(acc.code);
-  const magnitude = acc.type === "income" || acc.type === "expense" ? 900000 : 500000;
-  return Math.round((seed % magnitude) / 100) * 100;
+/** The real balance for a control-account type, or null if this account isn't one we can derive. */
+export function liveBalanceFor(key: DisplayTypeKey, agg: LedgerAggregates): number | null {
+  switch (key) {
+    case "receivable": return agg.debtorsBalance;
+    case "bank": return agg.bankBalance;
+    case "cash": return agg.cashBalance;
+    case "tax": return agg.taxPayable;
+    default: return null;
+  }
+}
+
+/**
+ * Whether this specific account may receive a live balance at all. Excludes
+ * "input" tax accounts (e.g. Input CGST) — taxPayable is GST collected on
+ * sales (output side); this app has no purchase ledger, so there's no real
+ * number for input tax credit, and showing the output figure there would be
+ * a genuine accounting error, not just a cosmetic one.
+ */
+export function isLiveEligible(acc: { name: string }, key: DisplayTypeKey): boolean {
+  if (key === "tax") return !/input/i.test(acc.name);
+  return key === "receivable" || key === "bank" || key === "cash";
+}
+
+/** Plain-English source of a live balance, shown wherever we tell the user why a number isn't editable. */
+export function liveBalanceSource(key: DisplayTypeKey): string {
+  switch (key) {
+    case "receivable": return "Computed live from every customer's opening balance plus invoiced totals, minus receipts allocated against them.";
+    case "bank": return "Computed live from receipts recorded in Receipt Entry with mode NEFT, UPI or Cheque.";
+    case "cash": return "Computed live from receipts recorded in Receipt Entry with mode Cash.";
+    case "tax": return "Computed live from GST collected (tax_amount) across all sales invoices.";
+    default: return "";
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -196,7 +246,7 @@ function defaultMeta(acc: GLAccount, nowIso: string): GLMeta {
   const isControl = cls.key === "receivable" || cls.key === "payable" || cls.key === "tax" || cls.key === "bank";
   return {
     status: "active",
-    opening_balance: derivedOpeningBalance(acc),
+    opening_balance: 0,
     currency: "INR",
     description: "",
     posting_allowed: !isControl,
@@ -212,6 +262,7 @@ function defaultMeta(acc: GLAccount, nowIso: string): GLMeta {
     cost_center: "Corporate",
     favorite: false,
     pinned: false,
+    balance_is_live: false,
     created_by: "System",
     created_at: nowIso,
     updated_by: "System",
@@ -239,6 +290,7 @@ function blankMeta(): GLMeta {
     cost_center: "Corporate",
     favorite: false,
     pinned: false,
+    balance_is_live: false,
     created_by: CURRENT_USER,
     created_at: iso,
     updated_by: CURRENT_USER,
@@ -246,11 +298,30 @@ function blankMeta(): GLMeta {
   };
 }
 
-/** Join real accounts with stored metadata, filling defaults for first-seen rows. */
-export function enrich(accounts: GLAccount[]): EnrichedGLAccount[] {
+/**
+ * Join real accounts with stored metadata, filling defaults for first-seen rows.
+ * When `ledger` is supplied, control accounts (Debtors, Bank, Cash, GST Payable)
+ * get their real, live balance substituted in for display — the persisted
+ * meta itself is left untouched, so this never overwrites a manual entry on
+ * disk, it just means the control accounts always render the true current
+ * number instead of whatever was last saved.
+ */
+export function enrich(accounts: GLAccount[], ledger?: LedgerAggregates): EnrichedGLAccount[] {
   const store = readStore();
   const nowIso = new Date().toISOString();
   let dirty = false;
+
+  // Only auto-compute a control account's balance when exactly one account
+  // fills that role. If a team ever adds a second Bank ledger, say, there's
+  // no way to know how the real total splits between them — better to leave
+  // both manual than silently attribute the whole subledger to the wrong one.
+  const eligibleKeyCounts = new Map<DisplayTypeKey, number>();
+  if (ledger) {
+    accounts.forEach((acc) => {
+      const cls = classify(acc);
+      if (isLiveEligible(acc, cls.key)) eligibleKeyCounts.set(cls.key, (eligibleKeyCounts.get(cls.key) ?? 0) + 1);
+    });
+  }
 
   const rows = accounts.map((acc) => {
     let meta = store[acc.id];
@@ -259,7 +330,18 @@ export function enrich(accounts: GLAccount[]): EnrichedGLAccount[] {
       store[acc.id] = meta;
       dirty = true;
     }
-    return { ...acc, meta };
+
+    let displayMeta = meta;
+    if (ledger) {
+      const cls = classify(acc);
+      const unambiguous = isLiveEligible(acc, cls.key) && eligibleKeyCounts.get(cls.key) === 1;
+      const live = unambiguous ? liveBalanceFor(cls.key, ledger) : null;
+      if (live !== null) {
+        displayMeta = { ...meta, opening_balance: live, balance_is_live: true, control_account: true, posting_allowed: false };
+      }
+    }
+
+    return { ...acc, meta: displayMeta };
   });
 
   if (dirty) writeStore(store);

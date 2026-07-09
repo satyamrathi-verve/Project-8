@@ -6,7 +6,15 @@ import { PageHeader } from "@/components/PageHeader";
 import { NotConfigured } from "@/components/NotConfigured";
 import { DataTable, type Column } from "@/components/DataTable";
 import { inputClass } from "@/components/FormField";
+import { TAX_RATE_OPTIONS } from "@/lib/format";
 import type { Customer } from "@/lib/types";
+
+// India's actual GSTIN (15-char) and PAN (10-char) formats. Bad tax IDs don't
+// break anything visibly on save — they quietly corrupt invoice printing and
+// GST compliance later, which is exactly the kind of error a bulk CSV import
+// should catch instead of an accountant discovering it on a printed invoice.
+const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
 
 /*
   Data Entry — Upload Report. Bulk-punch customers or invoices from a CSV
@@ -156,18 +164,39 @@ export default function UploadReportPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [existingCustomerCodes, setExistingCustomerCodes] = useState<Set<string>>(new Set());
   const [existingInvoiceNos, setExistingInvoiceNos] = useState<Set<string>>(new Set());
+  const [outstandingByCustomer, setOutstandingByCustomer] = useState<Map<string, number>>(new Map());
 
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<{ count: number; skipped: number; error?: string } | null>(null);
 
   async function loadReferenceData() {
     if (!supabase) return;
-    const { data: custs } = await supabase.from("customers").select("*").order("name");
+    const [{ data: custs }, { data: invs }, { data: allocs }] = await Promise.all([
+      supabase.from("customers").select("*").order("name"),
+      supabase.from("invoices").select("id,invoice_no,customer_id,total"),
+      supabase.from("receipt_allocations").select("invoice_id,amount"),
+    ]);
     setCustomers(custs ?? []);
     setExistingCustomerCodes(new Set((custs ?? []).map((c) => c.code.toLowerCase())));
-
-    const { data: invs } = await supabase.from("invoices").select("invoice_no");
     setExistingInvoiceNos(new Set((invs ?? []).map((i) => i.invoice_no.toLowerCase())));
+
+    // A customer's real current outstanding — their opening balance plus
+    // every invoice raised against them, minus every receipt allocated to
+    // those invoices. Needed to warn if a bulk-imported invoice would push
+    // them past their agreed credit limit, the way punching one invoice at a
+    // time naturally would (InvoiceForm checks this; a CSV bypasses it).
+    const allocatedByInvoiceId = new Map<string, number>();
+    (allocs ?? []).forEach((a) => allocatedByInvoiceId.set(a.invoice_id, (allocatedByInvoiceId.get(a.invoice_id) ?? 0) + Number(a.amount)));
+
+    const invoicedByCustomer = new Map<string, number>();
+    (invs ?? []).forEach((inv) => {
+      const outstanding = Number(inv.total) - (allocatedByInvoiceId.get(inv.id) ?? 0);
+      invoicedByCustomer.set(inv.customer_id, (invoicedByCustomer.get(inv.customer_id) ?? 0) + outstanding);
+    });
+
+    const outstanding = new Map<string, number>();
+    (custs ?? []).forEach((c) => outstanding.set(c.id, Number(c.opening_balance) + (invoicedByCustomer.get(c.id) ?? 0)));
+    setOutstandingByCustomer(outstanding);
   }
 
   useEffect(() => {
@@ -284,6 +313,8 @@ export default function UploadReportPage() {
       if (code && seen.has(code.toLowerCase())) errors.push("Duplicate in file");
       if (code) seen.add(code.toLowerCase());
       if (row.email && !/^\S+@\S+\.\S+$/.test(row.email)) warnings.push("Email looks invalid");
+      if (row.gstin && !GSTIN_RE.test(row.gstin.trim().toUpperCase())) warnings.push("GSTIN doesn't match the standard 15-character format");
+      if (row.pan && !PAN_RE.test(row.pan.trim().toUpperCase())) warnings.push("PAN doesn't match the standard 10-character format");
       if (row.credit_limit && Number.isNaN(Number(row.credit_limit))) warnings.push("Credit limit not a number — will use 0");
       if (row.credit_days && Number.isNaN(Number(row.credit_days))) warnings.push("Credit days not a number — will use 0");
       if (row.opening_balance && Number.isNaN(Number(row.opening_balance))) warnings.push("Opening balance not a number — will use 0");
@@ -293,6 +324,11 @@ export default function UploadReportPage() {
 
   const validatedInvoices: ValidatedInvoiceRow[] = useMemo(() => {
     const seen = new Set<string>();
+    // Running total of what each customer would owe after every row already
+    // processed in this file — so three new invoices for the same customer
+    // in one CSV correctly stack up against their credit limit together,
+    // not just checked one at a time in isolation.
+    const pendingByCustomer = new Map<string, number>();
     return invoiceRows.map((row) => {
       const errors: string[] = [];
       const warnings: string[] = [];
@@ -336,6 +372,34 @@ export default function UploadReportPage() {
 
       const total = (Number.isNaN(parsedSubtotal) ? 0 : parsedSubtotal) + parsedTax;
 
+      // GST slab sanity check — reuses the exact rate presets InvoiceForm
+      // offers, so an invoice punched here follows the same rule as one
+      // punched by hand. Catches the common fat-finger case (e.g. typing
+      // 1800 instead of 4500 for 18% tax on a ₹25,000 subtotal).
+      if (!Number.isNaN(parsedSubtotal) && parsedSubtotal > 0) {
+        const impliedRate = (parsedTax / parsedSubtotal) * 100;
+        const matchesSlab = TAX_RATE_OPTIONS.some((rate) => Math.abs(rate - impliedRate) < 0.5);
+        if (!matchesSlab) {
+          warnings.push(`Unusual GST rate (${impliedRate.toFixed(1)}%) — standard slabs are ${TAX_RATE_OPTIONS.join("/")}%`);
+        }
+      }
+
+      // Credit limit exposure — a one-by-one punch form naturally shows the
+      // customer's outstanding as you type; a CSV bypasses that entirely, so
+      // without this check a bulk import could silently blow past a
+      // customer's agreed credit limit with nobody noticing until collections.
+      if (resolvedCustomer && resolvedCustomer.credit_limit > 0 && !Number.isNaN(parsedSubtotal)) {
+        const currentOutstanding = outstandingByCustomer.get(resolvedCustomer.id) ?? 0;
+        const pending = pendingByCustomer.get(resolvedCustomer.id) ?? 0;
+        const projected = currentOutstanding + pending + total;
+        if (projected > resolvedCustomer.credit_limit) {
+          warnings.push(
+            `Exceeds ${resolvedCustomer.code}'s credit limit — would owe ₹${projected.toLocaleString("en-IN")} against a ₹${resolvedCustomer.credit_limit.toLocaleString("en-IN")} limit`
+          );
+        }
+        pendingByCustomer.set(resolvedCustomer.id, pending + total);
+      }
+
       return {
         ...row,
         errors,
@@ -349,7 +413,7 @@ export default function UploadReportPage() {
         total,
       };
     });
-  }, [invoiceRows, existingInvoiceNos, customersByCode]);
+  }, [invoiceRows, existingInvoiceNos, customersByCode, outstandingByCustomer]);
 
   const rows = kind === "customers" ? validatedCustomers : validatedInvoices;
   const okCount = rows.filter((r) => r.ok).length;
@@ -366,8 +430,8 @@ export default function UploadReportPage() {
           .map((r) => ({
             code: r.code.trim(),
             name: r.name.trim(),
-            gstin: r.gstin.trim() || null,
-            pan: r.pan.trim() || null,
+            gstin: r.gstin.trim().toUpperCase() || null,
+            pan: r.pan.trim().toUpperCase() || null,
             contact_person: r.contact_person.trim() || null,
             email: r.email.trim() || null,
             phone: r.phone.trim() || null,

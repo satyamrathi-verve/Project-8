@@ -19,10 +19,13 @@ import {
   formatMoney,
   formatDate,
   formatDateTime,
+  liveBalanceSource,
+  isLiveEligible,
   TYPE_TONE,
   type EnrichedGLAccount,
   type GLStatus,
   type SavedView,
+  type LedgerAggregates,
 } from "@/lib/glMeta";
 import { Icon } from "@/components/Icon";
 import { MotionDrawer } from "@/components/MotionDrawer";
@@ -217,23 +220,59 @@ export default function GLMasterPage() {
   const gridRef = useRef<HTMLDivElement>(null);
 
   /* ---------------- data ---------------- */
+  /*
+    Control accounts (Debtors, Bank, Cash, GST Payable) don't hold their own
+    balance — it's the total of a real subledger. Pull that subledger data
+    once per refresh so those accounts always show the true current number
+    instead of a placeholder. Kept best-effort: if these queries fail for any
+    reason, GL Accounts still loads fine with manually-entered balances only.
+  */
+  const fetchLedgerAggregates = useCallback(async (): Promise<LedgerAggregates | undefined> => {
+    if (!supabase) return undefined;
+    try {
+      const [{ data: custs }, { data: invs }, { data: allocs }, { data: receipts }] = await Promise.all([
+        supabase.from("customers").select("opening_balance"),
+        supabase.from("invoices").select("total,tax_amount"),
+        supabase.from("receipt_allocations").select("amount"),
+        supabase.from("receipts").select("amount,mode"),
+      ]);
+      const customerOpeningTotal = (custs ?? []).reduce((s, c) => s + Number(c.opening_balance), 0);
+      const invoiceTotal = (invs ?? []).reduce((s, i) => s + Number(i.total), 0);
+      const invoiceTaxTotal = (invs ?? []).reduce((s, i) => s + Number(i.tax_amount), 0);
+      const allocatedTotal = (allocs ?? []).reduce((s, a) => s + Number(a.amount), 0);
+      const bankBalance = (receipts ?? []).filter((r) => r.mode !== "cash").reduce((s, r) => s + Number(r.amount), 0);
+      const cashBalance = (receipts ?? []).filter((r) => r.mode === "cash").reduce((s, r) => s + Number(r.amount), 0);
+      return {
+        debtorsBalance: customerOpeningTotal + invoiceTotal - allocatedTotal,
+        bankBalance,
+        cashBalance,
+        taxPayable: invoiceTaxTotal,
+      };
+    } catch {
+      return undefined;
+    }
+  }, []);
+
   const fetchAccounts = useCallback(
     async (announce = false) => {
       if (!supabase) return;
       setLoading(true);
-      const { data, error } = await supabase.from("gl_accounts").select("*").order("code", { ascending: true });
+      const [{ data, error }, ledger] = await Promise.all([
+        supabase.from("gl_accounts").select("*").order("code", { ascending: true }),
+        fetchLedgerAggregates(),
+      ]);
       if (error) {
         setLoadError(error.message);
         setLoading(false);
         return;
       }
       setLoadError(null);
-      setAccounts(enrich((data ?? []) as GLAccount[]));
+      setAccounts(enrich((data ?? []) as GLAccount[], ledger));
       setRecentIds(readRecent());
       setLoading(false);
       if (announce) toast.success("Accounts refreshed");
     },
-    [toast],
+    [toast, fetchLedgerAggregates],
   );
 
   useEffect(() => {
@@ -1268,7 +1307,16 @@ function Cell({ a, col }: { a: EnrichedGLAccount; col: ColKey }) {
     case "parent": return a.parent_group ? <span className="text-slate-600 dark:text-slate-300">{a.parent_group}</span> : <span className="text-slate-300 dark:text-slate-600">—</span>;
     case "normal": return <NormalBalancePill nb={a.meta.normal_balance} />;
     case "status": { const s = STATUS_META[a.meta.status]; return <span className="inline-flex items-center gap-1.5"><span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} /><span className="text-slate-600 dark:text-slate-300">{s.label}</span></span>; }
-    case "balance": return <span className="font-mono tabular-nums text-slate-700 dark:text-slate-200">{formatMoney(a.meta.opening_balance, a.meta.currency)}</span>;
+    case "balance": return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="font-mono tabular-nums text-slate-700 dark:text-slate-200">{formatMoney(a.meta.opening_balance, a.meta.currency)}</span>
+        {a.meta.balance_is_live && (
+          <span title={liveBalanceSource(classify(a).key)} className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400">
+            <span className="h-1 w-1 rounded-full bg-emerald-500" /> Live
+          </span>
+        )}
+      </span>
+    );
     case "currency": return <span className="text-slate-600 dark:text-slate-300">{a.meta.currency}</span>;
     case "system": return a.meta.is_system ? <Badge variant="info" size="sm">System</Badge> : <span className="text-xs text-slate-400">User</span>;
     case "created": return <span className="text-slate-500 dark:text-slate-400">{formatDate(a.meta.created_at)}</span>;
@@ -1576,6 +1624,8 @@ function AddEditPanel({ form, setForm, errors, editing, initialForm, dirty, savi
 }) {
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => ({ ...f, [k]: v }));
   const changed = (k: keyof FormState) => editing && form[k] !== initialForm[k];
+  const formCls = classify({ id: "", code: form.code, name: form.name, type: form.type, parent_group: form.parent_group || null });
+  const isLiveControlType = isLiveEligible({ name: form.name }, formCls.key);
   const applyType = (t: GLAccount["type"]) => setForm((f) => ({ ...f, type: t, normal_balance: normalBalanceOf(t) }));
   return (
     <div className="flex h-full flex-col">
@@ -1617,8 +1667,22 @@ function AddEditPanel({ form, setForm, errors, editing, initialForm, dirty, savi
           <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400">Financial statement mapping: <span className="font-semibold text-slate-700 dark:text-slate-200">{fsMappingOf(form.type)}</span></div>
         </Section>
         <Section title="Opening Balance" icon="wallet">
+          {isLiveControlType && (
+            <div className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+              <span className="font-semibold">This account's balance is computed live, not entered manually.</span> {liveBalanceSource(formCls.key)}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Opening Balance" error={errors.opening_balance} changed={changed("opening_balance")}><input value={form.opening_balance} onChange={(e) => set("opening_balance", e.target.value)} inputMode="decimal" className={`${inputClass} w-full text-right font-mono ${errors.opening_balance ? "border-red-400 ring-red-200" : ""}`} /></Field>
+            <Field label="Opening Balance" error={errors.opening_balance} changed={changed("opening_balance")}>
+              <input
+                value={form.opening_balance}
+                onChange={(e) => set("opening_balance", e.target.value)}
+                inputMode="decimal"
+                disabled={isLiveControlType}
+                title={isLiveControlType ? "Computed live — see note above" : undefined}
+                className={`${inputClass} w-full text-right font-mono ${errors.opening_balance ? "border-red-400 ring-red-200" : ""} ${isLiveControlType ? "cursor-not-allowed bg-slate-50 text-slate-400 dark:bg-slate-800" : ""}`}
+              />
+            </Field>
             <Field label="Currency" changed={changed("currency")}><select value={form.currency} onChange={(e) => set("currency", e.target.value)} className={`${inputClass} w-full`}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select></Field>
           </div>
         </Section>
@@ -1731,7 +1795,7 @@ function OverviewTab({ a }: { a: EnrichedGLAccount }) {
   const t = classify(a);
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3"><Stat label="Opening Balance" value={formatMoney(a.meta.opening_balance, a.meta.currency)} big /><Stat label="Currency" value={a.meta.currency} /></div>
+      <div className="grid grid-cols-2 gap-3"><Stat label={a.meta.balance_is_live ? "Current Balance (Live)" : "Opening Balance"} value={formatMoney(a.meta.opening_balance, a.meta.currency)} big /><Stat label="Currency" value={a.meta.currency} /></div>
       <dl className="space-y-2.5">
         <DRow label="Display Type" value={t.label} /><DRow label="Base Type" value={a.type} capitalize /><DRow label="Financial Statement" value={a.meta.fs_mapping} />
         <DRow label="Cash Flow Category" value={a.meta.cashflow_category} /><DRow label="GST Category" value={a.meta.gst_category} /><DRow label="Parent Group" value={a.parent_group ?? "—"} />
@@ -1753,15 +1817,27 @@ function OverviewTab({ a }: { a: EnrichedGLAccount }) {
   );
 }
 function OpeningTab({ a }: { a: EnrichedGLAccount }) {
+  const t = classify(a);
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-brand/5 to-transparent p-5 dark:border-slate-800">
-        <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Opening Balance ({a.meta.normal_balance === "debit" ? "Dr" : "Cr"})</p>
+        <p className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+          {a.meta.balance_is_live ? "Current Balance" : "Opening Balance"} ({a.meta.normal_balance === "debit" ? "Dr" : "Cr"})
+          {a.meta.balance_is_live && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400">
+              <span className="h-1 w-1 rounded-full bg-emerald-500" /> Live
+            </span>
+          )}
+        </p>
         <p className="mt-1 text-3xl font-bold tabular-nums text-slate-900 dark:text-white">{formatMoney(a.meta.opening_balance, a.meta.currency)}</p>
-        <p className="mt-1 text-xs text-slate-400">As of {formatDate(a.meta.created_at)}</p>
+        <p className="mt-1 text-xs text-slate-400">{a.meta.balance_is_live ? "Updates automatically — refresh the page after new invoices or receipts." : `As of ${formatDate(a.meta.created_at)}`}</p>
       </div>
       <div className="grid grid-cols-2 gap-3"><Stat label="Currency" value={a.meta.currency} /><Stat label="Normal Balance" value={a.meta.normal_balance === "debit" ? "Debit" : "Credit"} /></div>
-      <p className="text-xs text-slate-400">Posted balances are computed from journals once transaction modules are live.</p>
+      <p className="text-xs text-slate-400">
+        {a.meta.balance_is_live
+          ? liveBalanceSource(t.key)
+          : "This is the manually entered opening balance for this account — edit it from the Edit form."}
+      </p>
     </div>
   );
 }
