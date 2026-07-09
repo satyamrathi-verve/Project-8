@@ -35,7 +35,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { href: "/invoices", label: "Sales Invoices", icon: "receipt", built: true },
       { href: "/receipts", label: "Receipt Entry", icon: "wallet", built: true },
-      { href: "/upload", label: "Upload Report", icon: "upload", built: false },
+      { href: "/upload", label: "Upload Report", icon: "upload", built: true },
       { href: "/reminders", label: "AR Followup", icon: "bell", built: false, badge: 3 },
     ],
   },
