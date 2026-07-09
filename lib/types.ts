@@ -36,7 +36,24 @@ export interface GLAccount {
   parent_group: string | null;
 }
 
-export type InvoiceStatus = "open" | "partial" | "paid" | "overdue";
+export type InvoiceStatus = "open" | "partial" | "paid" | "overdue" | "draft" | "void";
+
+/*
+  Discount/tax/shipping settings chosen on the punch/edit form, persisted as
+  one jsonb column (invoices.calc_meta) so reopening an invoice restores them
+  exactly. Optional/partial because invoices saved before this column existed
+  have `{}` here — screens reading it must fall back sensibly.
+*/
+export interface InvoiceCalcMeta {
+  discountType?: "percentage" | "fixed";
+  discountValue?: number;
+  taxRatePreset?: number | "custom";
+  customTaxRatePct?: number;
+  overrideTax?: boolean;
+  manualTaxAmount?: number;
+  shippingCharges?: number;
+  isTaxable?: boolean;
+}
 
 export interface Invoice {
   id: string;
@@ -49,6 +66,7 @@ export interface Invoice {
   total: number;
   status: InvoiceStatus;
   notes: string | null;
+  calc_meta: InvoiceCalcMeta | null;
   created_at: string;
 }
 

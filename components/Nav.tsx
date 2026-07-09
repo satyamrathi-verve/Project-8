@@ -33,7 +33,7 @@ const GROUPS: NavGroup[] = [
   {
     title: "Transactions",
     items: [
-      { href: "/invoices", label: "Sales Invoices", icon: "receipt", built: false },
+      { href: "/invoices", label: "Sales Invoices", icon: "receipt", built: true },
       { href: "/receipts", label: "Receipt Entry", icon: "wallet", built: true },
       { href: "/upload", label: "Upload Report", icon: "upload", built: false },
       { href: "/reminders", label: "AR Followup", icon: "bell", built: false, badge: 3 },
@@ -75,7 +75,7 @@ export function Nav() {
 
   return (
     <nav
-      className={`relative flex h-full flex-col border-r border-slate-200 bg-white transition-[width] duration-300 ease-out dark:border-slate-800 dark:bg-slate-900 ${
+      className={`relative flex h-full flex-col border-r border-slate-200 bg-white transition-[width] duration-300 ease-out dark:border-slate-800 dark:bg-slate-900 print:hidden ${
         collapsed ? "w-[76px]" : "w-64"
       } ${ready ? "" : "duration-0"}`}
     >

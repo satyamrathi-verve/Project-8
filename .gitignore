@@ -9,6 +9,7 @@
 .DS_Store
 *.tsbuildinfo
 next-env.d.ts
+dev.log
 
 # NOTE: .env.local is intentionally NOT ignored in the per-team repos —
 # each team's Supabase URL + anon key are committed so `npm run dev` just works.

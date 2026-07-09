@@ -6,6 +6,10 @@ export interface Column<T> {
   /** Optional custom cell; defaults to String(row[key]). */
   render?: (row: T) => ReactNode;
   className?: string;
+  /** Makes the header clickable (e.g. to toggle sort direction). */
+  onHeaderClick?: () => void;
+  /** Shows a ▲/▼ indicator next to the header when set. */
+  sortDirection?: "asc" | "desc";
 }
 
 /*
@@ -22,13 +26,27 @@ export function DataTable<T extends { id: string }>({
   empty?: string;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50 text-left">
             {columns.map((c) => (
               <th key={c.key} className={`px-4 py-3 font-semibold text-slate-600 ${c.className ?? ""}`}>
-                {c.header}
+                {c.onHeaderClick ? (
+                  <button
+                    type="button"
+                    onClick={c.onHeaderClick}
+                    className="flex items-center gap-1 hover:text-slate-900"
+                    title="Click to sort"
+                  >
+                    {c.header}
+                    <span className={c.sortDirection ? "text-slate-600" : "text-slate-300"}>
+                      {c.sortDirection === "asc" ? "▲" : c.sortDirection === "desc" ? "▼" : "⇅"}
+                    </span>
+                  </button>
+                ) : (
+                  c.header
+                )}
               </th>
             ))}
           </tr>
