@@ -19,7 +19,8 @@
   input,
   select,
   textarea {
-    @apply transition duration-200 ease-[cubic-bezier(.2,.8,.2,1)];
+    @apply transition duration-200;
+    transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
   button:focus-visible,

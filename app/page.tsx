@@ -22,11 +22,7 @@ const ROADMAP = [
 
 export default function HomePage() {
   return (
-<<<<<<< HEAD
-    <div className="p-8">
-=======
     <div className="p-6">
->>>>>>> 18f878aab18e469e4ff7f534efdc9e6186267252
       <PageHeader
         title="Welcome — let's build the AR Manager"
         subtitle="Nothing here is pre-built. You build every screen, one at a time."

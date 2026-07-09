@@ -1,10 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-<<<<<<< HEAD
-import { Nav } from "@/components/Nav";
-=======
->>>>>>> 18f878aab18e469e4ff7f534efdc9e6186267252
 import { AuthGate } from "@/components/AuthGate";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
@@ -29,16 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body className="font-sans">
-<<<<<<< HEAD
-        <div className="flex h-screen overflow-hidden">
-          <Nav />
-          <main className="flex-1 overflow-y-auto">
-            <AuthGate>{children}</AuthGate>
-          </main>
-        </div>
-=======
         <AuthGate>{children}</AuthGate>
->>>>>>> 18f878aab18e469e4ff7f534efdc9e6186267252
       </body>
     </html>
   );
