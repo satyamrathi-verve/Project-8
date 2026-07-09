@@ -138,7 +138,7 @@ export default function ReminderTemplatesPage() {
   ];
 
   return (
-    <>
+    <div className="p-8">
       <PageHeader
         title="AR Followup — Reminder Template"
         subtitle="The chaser email you send overdue customers. Save it once, use it for every reminder."
@@ -253,6 +253,6 @@ export default function ReminderTemplatesPage() {
           empty={loading ? "Loading templates…" : "No reminder templates yet."}
         />
       )}
-    </>
+    </div>
   );
 }

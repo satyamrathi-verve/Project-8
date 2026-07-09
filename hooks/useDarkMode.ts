@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-const STORAGE_KEY = "ar-templates-theme";
+// Shared with the rest of the app's dark-mode toggle (see the theme script in app/layout.tsx).
+const STORAGE_KEY = "gl_theme";
 
 export function useDarkMode() {
   const [dark, setDark] = useState(false);

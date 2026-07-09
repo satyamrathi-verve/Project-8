@@ -132,7 +132,7 @@ export default function CustomerMasterPage() {
   ];
 
   return (
-    <>
+    <div className="p-8">
       <PageHeader
         title="Customer Master"
         subtitle="Every customer your team bills. Add one or edit an existing entry."
@@ -257,6 +257,6 @@ export default function CustomerMasterPage() {
           empty={loading ? "Loading customers…" : "No customers yet."}
         />
       )}
-    </>
+    </div>
   );
 }

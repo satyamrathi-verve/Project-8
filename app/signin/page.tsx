@@ -23,7 +23,7 @@ export default function SignInPage() {
   }
 
   return (
-    <div className="mx-auto max-w-sm">
+    <div className="mx-auto max-w-sm p-8">
       <PageHeader title="Sign in" subtitle="Sign in to use the AR Manager." />
 
       <form
