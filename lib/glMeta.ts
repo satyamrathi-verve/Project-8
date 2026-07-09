@@ -319,7 +319,6 @@ export interface SavedView {
   filterStatus: string;
   filterGroup: string;
   filterSystem: string;
-  favOnly: boolean;
 }
 
 export function readViews(): SavedView[] {

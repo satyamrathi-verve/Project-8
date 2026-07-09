@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 };
 
 // Apply the saved theme before paint so there's no light/dark flash.
-const themeScript = `(function(){try{var t=localStorage.getItem('gl_theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.classList.add('dark');}}catch(e){}})();`;
+const themeScript = `(function(){try{var t=localStorage.getItem('erp_theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.classList.add('dark');}}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

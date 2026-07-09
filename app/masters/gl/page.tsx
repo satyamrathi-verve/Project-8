@@ -17,18 +17,14 @@ import {
   normalBalanceOf,
   fsMappingOf,
   formatMoney,
-  compactMoney,
   formatDate,
   formatDateTime,
-  pseudoSeries,
-  lastMonths,
   TYPE_TONE,
   type EnrichedGLAccount,
   type GLStatus,
   type SavedView,
 } from "@/lib/glMeta";
 import { Icon } from "@/components/Icon";
-import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { MotionDrawer } from "@/components/MotionDrawer";
 import { Popover } from "@/components/Popover";
 import { Modal } from "@/components/Modal";
@@ -36,10 +32,18 @@ import { Badge } from "@/components/Badge";
 import { NotConfigured } from "@/components/NotConfigured";
 import { inputClass } from "@/components/FormField";
 import { useToast, Toaster } from "@/components/Toast";
-import { Donut, BarPair, Sparkline, TrendBars } from "@/components/MiniCharts";
 import { CommandPalette, type Command, type PaletteAccount } from "@/components/CommandPalette";
 import { ImportWizard, type ImportRow } from "@/components/ImportWizard";
 import { useRouter } from "next/navigation";
+import { ScreenHeader } from "@/components/erp/ScreenHeader";
+import { Ribbon, RibbonButton, RibbonDivider } from "@/components/erp/Ribbon";
+import { ThemeToggle } from "@/components/erp/ThemeToggle";
+import { SearchBar, highlightMatch } from "@/components/erp/SearchBar";
+import { FilterChip, ChipBtn, FilterResetButton } from "@/components/erp/FilterBar";
+import { SummaryStrip, SummaryStat, StatDivider } from "@/components/erp/SummaryStrip";
+import { HeaderSort, Pagination, SkeletonRows, EmptyState } from "@/components/erp/DataGridKit";
+import { Section, Field, Toggle } from "@/components/erp/FormKit";
+import { MenuItem, BulkBtn, BulkBar } from "@/components/erp/MenuKit";
 
 /* =============================================================== *
  * Config
@@ -53,6 +57,16 @@ const BASE_TYPES: { value: GLAccount["type"]; label: string; help: string; icon:
 ];
 const TYPE_ORDER: GLAccount["type"][] = ["asset", "liability", "income", "expense"];
 const TYPE_LABEL: Record<GLAccount["type"], string> = { asset: "Assets", liability: "Liabilities", income: "Income", expense: "Expenses" };
+
+// Tally-style standard parent groups, offered per account nature when creating.
+// (Equity is modelled under the Liability nature since the ledger stores 4 base types.)
+const GROUPS_BY_TYPE: Record<GLAccount["type"], string[]> = {
+  asset: ["Current Assets", "Cash", "Cash in Hand", "Bank Accounts", "Accounts Receivable", "Inventory", "Fixed Assets", "Furniture", "Machinery", "Investments", "Loans & Advances (Asset)", "Misc Assets"],
+  liability: ["Current Liabilities", "Accounts Payable", "Duties & Taxes", "GST Payable", "Payroll Liabilities", "Provisions", "Loans", "Bank OD", "Credit Cards", "Capital Account", "Retained Earnings", "Current Year Earnings", "Partner Capital"],
+  income: ["Sales", "Service Revenue", "Direct Income", "Interest Income", "Other Income"],
+  expense: ["Purchase", "Direct Expenses", "Salary Expense", "Rent", "Electricity", "Telephone", "Internet", "Insurance", "Marketing", "Travel", "Office Expense", "Depreciation", "Bank Charges", "Indirect Expenses", "Misc Expenses"],
+};
+const ALL_GROUPS = Array.from(new Set(Object.values(GROUPS_BY_TYPE).flat()));
 
 const STATUS_META: Record<GLStatus, { label: string; variant: "success" | "warning" | "default"; dot: string }> = {
   active: { label: "Active", variant: "success", dot: "bg-emerald-500" },
@@ -86,7 +100,7 @@ const COLDEF: Record<ColKey, { label: string; align?: "right"; minWidth: number;
   updated: { label: "Last Updated", minWidth: 120, width: 150, sortable: true },
 };
 const DEFAULT_ORDER: ColKey[] = ["type", "parent", "normal", "status", "balance", "currency", "system", "created", "updated"];
-const DEFAULT_VISIBLE: Record<ColKey, boolean> = { type: true, parent: true, normal: true, status: true, balance: true, currency: false, system: true, created: false, updated: true };
+const DEFAULT_VISIBLE: Record<ColKey, boolean> = { type: true, parent: true, normal: true, status: true, balance: false, currency: false, system: false, created: false, updated: false };
 const PAGE_SIZES = [10, 25, 50];
 
 const TYPE_HEX: Record<GLAccount["type"] | "equity", string> = {
@@ -147,14 +161,9 @@ export default function GLMasterPage() {
   const [fType, setFType] = useState("");
   const [fStatus, setFStatus] = useState("");
   const [fGroup, setFGroup] = useState("");
-  const [fCurrency, setFCurrency] = useState("");
   const [fNormal, setFNormal] = useState("");
   const [fPosting, setFPosting] = useState("");
-  const [fControl, setFControl] = useState("");
   const [fSystem, setFSystem] = useState("");
-  const [fCreated, setFCreated] = useState("");
-  const [fUpdated, setFUpdated] = useState("");
-  const [favOnly, setFavOnly] = useState(false);
   const [views, setViews] = useState<SavedView[]>([]);
 
   // sort + paging + view
@@ -164,13 +173,7 @@ export default function GLMasterPage() {
   const [view, setView] = useState<ViewMode>("grid");
   const [split, setSplit] = useState(false);
   const [density, setDensity] = useState<Density>("comfortable");
-  const [showAnalytics, setShowAnalytics] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set(TYPE_ORDER.map((t) => `type:${t}`)));
-
-  // extra filters
-  const [fDept, setFDept] = useState("");
-  const [fLoc, setFLoc] = useState("");
-  const [fCost, setFCost] = useState("");
 
   // command palette + import wizard + bulk currency
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -210,7 +213,6 @@ export default function GLMasterPage() {
   const [recentIds, setRecentIds] = useState<string[]>([]);
 
   const searchRef = useRef<HTMLInputElement>(null);
-  const searchBoxRef = useRef<HTMLDivElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -286,27 +288,8 @@ export default function GLMasterPage() {
     };
   }, [ctxMenu]);
 
-  /* ---------------- search dropdown dismiss ---------------- */
-  useEffect(() => {
-    if (!searchOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (searchBoxRef.current && !searchBoxRef.current.contains(e.target as Node)) setSearchOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [searchOpen]);
-
   /* ---------------- derived ---------------- */
   const parentGroups = useMemo(() => Array.from(new Set(accounts.map((a) => a.parent_group).filter(Boolean) as string[])).sort(), [accounts]);
-  const currencies = useMemo(() => Array.from(new Set(accounts.map((a) => a.meta.currency))).sort(), [accounts]);
-  const departments = useMemo(() => Array.from(new Set(accounts.map((a) => a.meta.department).filter(Boolean))).sort(), [accounts]);
-  const locations = useMemo(() => Array.from(new Set(accounts.map((a) => a.meta.location).filter(Boolean))).sort(), [accounts]);
-  const costCenters = useMemo(() => Array.from(new Set(accounts.map((a) => a.meta.cost_center).filter(Boolean))).sort(), [accounts]);
-
-  const withinDays = (iso: string, days: string) => {
-    if (!days) return true;
-    return Date.now() - new Date(iso).getTime() <= Number(days) * 86400000;
-  };
 
   const filtered = useMemo(() => {
     let rows = accounts;
@@ -328,17 +311,9 @@ export default function GLMasterPage() {
     if (fType) rows = rows.filter((a) => a.type === fType);
     if (fStatus) rows = rows.filter((a) => a.meta.status === fStatus);
     if (fGroup) rows = rows.filter((a) => a.parent_group === fGroup);
-    if (fCurrency) rows = rows.filter((a) => a.meta.currency === fCurrency);
     if (fNormal) rows = rows.filter((a) => a.meta.normal_balance === fNormal);
     if (fPosting) rows = rows.filter((a) => a.meta.posting_allowed === (fPosting === "yes"));
-    if (fControl) rows = rows.filter((a) => a.meta.control_account === (fControl === "yes"));
     if (fSystem) rows = rows.filter((a) => a.meta.is_system === (fSystem === "yes"));
-    if (fCreated) rows = rows.filter((a) => withinDays(a.meta.created_at, fCreated));
-    if (fUpdated) rows = rows.filter((a) => withinDays(a.meta.updated_at, fUpdated));
-    if (fDept) rows = rows.filter((a) => a.meta.department === fDept);
-    if (fLoc) rows = rows.filter((a) => a.meta.location === fLoc);
-    if (fCost) rows = rows.filter((a) => a.meta.cost_center === fCost);
-    if (favOnly) rows = rows.filter((a) => a.meta.favorite);
 
     const val = (a: EnrichedGLAccount, col: string): string | number => {
       switch (col) {
@@ -366,7 +341,7 @@ export default function GLMasterPage() {
       }
       return 0;
     });
-  }, [accounts, search, fType, fStatus, fGroup, fCurrency, fNormal, fPosting, fControl, fSystem, fCreated, fUpdated, fDept, fLoc, fCost, favOnly, sorts]);
+  }, [accounts, search, fType, fStatus, fGroup, fNormal, fPosting, fSystem, sorts]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -376,64 +351,21 @@ export default function GLMasterPage() {
     setPage(1);
     setActiveRow(-1);
     setLastClicked(-1);
-  }, [search, fType, fStatus, fGroup, fCurrency, fNormal, fPosting, fControl, fSystem, fCreated, fUpdated, fDept, fLoc, fCost, favOnly, pageSize, view]);
+  }, [search, fType, fStatus, fGroup, fNormal, fPosting, fSystem, pageSize, view]);
 
   const visibleCols = useMemo(() => order.filter((k) => visible[k]), [order, visible]);
 
-  /* ---------------- money + counts + charts ---------------- */
-  const money = useMemo(() => {
-    const s = { asset: 0, liability: 0, income: 0, expense: 0 } as Record<GLAccount["type"], number>;
-    accounts.forEach((a) => (s[a.type] += a.meta.opening_balance));
-    return { ...s, net: s.asset - s.liability };
-  }, [accounts]);
-
+  /* ---------------- counts (compact summary) ---------------- */
   const counts = useMemo(() => {
-    const c = { total: accounts.length, asset: 0, liability: 0, income: 0, expense: 0, equity: 0, inactive: 0, system: 0, recentAdded: 0, recentUpdated: 0, pending: 0 };
-    const days30 = 30 * 86400000;
+    const c = { total: accounts.length, asset: 0, liability: 0, income: 0, expense: 0, equity: 0, inactive: 0, system: 0 };
     accounts.forEach((a) => {
       c[a.type] += 1;
       if (classify(a).key === "equity") c.equity += 1;
       if (a.meta.status !== "active") c.inactive += 1;
       if (a.meta.is_system) c.system += 1;
-      if (Date.now() - new Date(a.meta.created_at).getTime() <= days30) c.recentAdded += 1;
-      if (Date.now() - new Date(a.meta.updated_at).getTime() <= days30) c.recentUpdated += 1;
-      if (a.meta.status === "archived") c.pending += 1;
     });
     return c;
   }, [accounts]);
-
-  // last updated + fiscal context
-  const lastUpdated = useMemo(() => {
-    if (!accounts.length) return null;
-    return accounts.reduce((m, a) => (a.meta.updated_at > m ? a.meta.updated_at : m), accounts[0].meta.updated_at);
-  }, [accounts]);
-  const fiscal = useMemo(() => {
-    const now = new Date();
-    const y = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1; // India FY Apr–Mar
-    return { year: `FY ${y}–${String((y + 1) % 100).padStart(2, "0")}`, period: now.toLocaleDateString("en-IN", { month: "long", year: "numeric" }) };
-  }, []);
-
-  // analytics: top parent groups, opening-balance distribution, recently modified
-  const topGroups = useMemo(() => {
-    const m = new Map<string, number>();
-    accounts.forEach((a) => { const g = a.parent_group ?? "Ungrouped"; m.set(g, (m.get(g) ?? 0) + 1); });
-    const palette = ["#2f6bff", "#8b5cf6", "#10b981", "#f59e0b", "#f43f5e"];
-    return Array.from(m.entries()).sort((x, y) => y[1] - x[1]).slice(0, 5).map(([label, value], i) => ({ label, value, color: palette[i % palette.length] }));
-  }, [accounts]);
-  const recentlyModified = useMemo(() => [...accounts].sort((a, b) => (a.meta.updated_at < b.meta.updated_at ? 1 : -1)).slice(0, 5), [accounts]);
-
-  const donutData = useMemo(
-    () => [
-      { label: "Assets", value: counts.asset, color: TYPE_HEX.asset },
-      { label: "Liabilities", value: Math.max(counts.liability - counts.equity, 0), color: TYPE_HEX.liability },
-      { label: "Equity", value: counts.equity, color: TYPE_HEX.equity },
-      { label: "Income", value: counts.income, color: TYPE_HEX.income },
-      { label: "Expenses", value: counts.expense, color: TYPE_HEX.expense },
-    ].filter((d) => d.value > 0),
-    [counts],
-  );
-  const trendPoints = useMemo(() => pseudoSeries(`create-${accounts.length}`, 6, Math.max(2, Math.round(accounts.length / 3))), [accounts.length]);
-  const trendLabels = useMemo(() => lastMonths(6), []);
 
   /* ---------------- selection ---------------- */
   const pageIds = paged.map((a) => a.id);
@@ -742,7 +674,7 @@ export default function GLMasterPage() {
   /* ---------------- saved views ---------------- */
   const saveView = (name: string) => {
     if (!name.trim()) return;
-    const next = [...views, { id: makeId(), name: name.trim(), search, filterType: fType, filterStatus: fStatus, filterGroup: fGroup, filterSystem: fSystem, favOnly }];
+    const next = [...views, { id: makeId(), name: name.trim(), search, filterType: fType, filterStatus: fStatus, filterGroup: fGroup, filterSystem: fSystem }];
     setViews(next);
     writeViews(next);
     toast.success(`View "${name.trim()}" saved`);
@@ -753,7 +685,6 @@ export default function GLMasterPage() {
     setFStatus(v.filterStatus);
     setFGroup(v.filterGroup);
     setFSystem(v.filterSystem);
-    setFavOnly(v.favOnly);
     toast.info(`Applied "${v.name}"`);
   };
   const deleteView = (id: string) => {
@@ -767,20 +698,11 @@ export default function GLMasterPage() {
     setFType("");
     setFStatus("");
     setFGroup("");
-    setFCurrency("");
     setFNormal("");
     setFPosting("");
-    setFControl("");
     setFSystem("");
-    setFCreated("");
-    setFUpdated("");
-    setFDept("");
-    setFLoc("");
-    setFCost("");
-    setFavOnly(false);
   };
-  const activeFilterCount =
-    [fType, fStatus, fGroup, fCurrency, fNormal, fPosting, fControl, fSystem, fCreated, fUpdated, fDept, fLoc, fCost].filter(Boolean).length + (favOnly ? 1 : 0);
+  const activeFilterCount = [fType, fStatus, fGroup, fNormal, fPosting, fSystem].filter(Boolean).length;
 
   /* ---------------- search suggestions / recent ---------------- */
   const suggestions = useMemo(() => {
@@ -940,240 +862,122 @@ export default function GLMasterPage() {
 
   return (
     <div className="min-h-full bg-slate-50 dark:bg-slate-950">
-      {/* ============ Sticky header + ribbon ============ */}
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/80 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80">
-        <div className="px-6 pt-4">
-          <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs font-medium text-slate-400 dark:text-slate-500">
-            <span>Masters</span>
-            <Icon name="chevron-right" className="h-3 w-3" />
-            <span className="text-slate-600 dark:text-slate-300">GL Accounts</span>
-          </nav>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-4 px-6 pb-3 pt-2">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-brand to-brand-dark text-white shadow-glow">
-              <Icon name="bank" className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">GL Accounts</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Manage your chart of accounts</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setPaletteOpen(true)} className="hidden items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-500 transition-colors hover:bg-slate-50 md:inline-flex dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800" title="Command palette · Ctrl K">
-              <Icon name="search" className="h-4 w-4" /> <span className="text-slate-400">Search…</span>
-              <kbd className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-400 dark:border-slate-600 dark:bg-slate-900">Ctrl K</kbd>
-            </button>
+      <ScreenHeader
+        icon="bank"
+        title="GL Accounts"
+        subtitle="Manage your chart of accounts"
+        breadcrumb={["Masters", "GL Accounts"]}
+        actions={
+          <>
             <ViewToggle view={view} setView={setView} />
             <button onClick={() => setSplit((s) => !s)} title="Split view (details beside grid)" aria-pressed={split} className={`hidden h-9 w-9 items-center justify-center rounded-lg border transition-colors lg:inline-flex ${split ? "border-brand/40 bg-blue-50 text-brand dark:bg-brand/10" : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
               <Icon name="panel-left" className="h-[18px] w-[18px]" />
             </button>
             <ThemeToggle />
-          </div>
-        </div>
-
-        {/* meta strip: company · fiscal year · period · last updated */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-6 pb-2 text-xs text-slate-500 dark:text-slate-400">
-          <Popover panelClass="w-56" button={(o) => (
-            <button className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-medium transition-colors ${o ? "bg-slate-100 dark:bg-slate-800" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}>
-              <Icon name="building" className="h-3.5 w-3.5 text-slate-400" /> Verve Advisory Pvt Ltd <Icon name="chevron-down" className="h-3 w-3 opacity-60" />
-            </button>
-          )}>
-            {(close) => (
-              <div>
-                <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Company</p>
-                <button onClick={close} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-brand hover:bg-slate-100 dark:hover:bg-slate-700"><Icon name="check" className="h-4 w-4" /> Verve Advisory Pvt Ltd</button>
-                <p className="px-2.5 py-2 text-xs text-slate-400">Single-entity demo. Multi-company coming with consolidation.</p>
-              </div>
-            )}
-          </Popover>
-          <span className="inline-flex items-center gap-1.5"><Icon name="calendar" className="h-3.5 w-3.5 text-slate-400" /> {fiscal.year}</span>
-          <span className="inline-flex items-center gap-1.5"><Icon name="book" className="h-3.5 w-3.5 text-slate-400" /> Period: {fiscal.period}</span>
-          {lastUpdated && <span className="inline-flex items-center gap-1.5"><Icon name="refresh" className="h-3.5 w-3.5 text-slate-400" /> Updated {formatDate(lastUpdated)}</span>}
-        </div>
-
-        {/* ERP ribbon */}
-        <div className="flex items-center gap-1 overflow-x-auto scroll-thin border-t border-slate-100 px-4 py-1.5 dark:border-slate-800">
-          <RibbonButton icon="plus" label="New" shortcut="Ctrl N" primary onClick={openAdd} />
-          <RibbonButton icon="edit" label="Edit" shortcut="Ctrl E" disabled={!primaryAccount} onClick={() => primaryAccount && openEdit(primaryAccount)} />
-          <RibbonButton icon="duplicate" label="Duplicate" disabled={!primaryAccount} onClick={() => primaryAccount && openDuplicate(primaryAccount)} />
-          <RibbonButton icon="trash" label="Delete" disabled={!primaryAccount} onClick={() => primaryAccount && askDelete(primaryAccount)} />
-          <RibbonDivider />
-          <RibbonButton icon="upload" label="Import" onClick={() => setWizardOpen(true)} />
-          <RibbonButton icon="chart-bar" label="Excel" onClick={() => exportExcel(filtered)} />
-          <RibbonButton icon="download" label="CSV" onClick={() => exportCsv(filtered)} />
-          <RibbonButton icon="printer" label="Print" onClick={() => window.print()} />
-          <RibbonDivider />
-          <RibbonButton icon="refresh" label="Refresh" spinning={loading} onClick={() => fetchAccounts(true)} />
-          <RibbonButton icon="save" label="Settings" onClick={() => setSettingsOpen(true)} />
-        </div>
-      </header>
+          </>
+        }
+        ribbon={
+          <Ribbon>
+            <RibbonButton icon="plus" label="New" shortcut="Ctrl N" primary onClick={openAdd} />
+            <RibbonButton icon="edit" label="Edit" shortcut="Ctrl E" disabled={!primaryAccount} onClick={() => primaryAccount && openEdit(primaryAccount)} />
+            <RibbonButton icon="duplicate" label="Duplicate" disabled={!primaryAccount} onClick={() => primaryAccount && openDuplicate(primaryAccount)} />
+            <RibbonButton icon="trash" label="Delete" disabled={!primaryAccount} onClick={() => primaryAccount && askDelete(primaryAccount)} />
+            <RibbonDivider />
+            <RibbonButton icon="upload" label="Import" onClick={() => setWizardOpen(true)} />
+            <Popover panelClass="w-44" button={(o) => (
+              <button title="Export" className={`inline-flex flex-none items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all ${o ? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200" : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
+                <Icon name="download" className="h-4 w-4" /> <span className="hidden sm:inline">Export</span> <Icon name="chevron-down" className="h-3 w-3 opacity-60" />
+              </button>
+            )}>
+              {(close) => (
+                <div>
+                  <MenuItem icon="download" label="Export CSV" onClick={() => { exportCsv(filtered); close(); }} />
+                  <MenuItem icon="chart-bar" label="Export Excel" onClick={() => { exportExcel(filtered); close(); }} />
+                </div>
+              )}
+            </Popover>
+            <RibbonButton icon="printer" label="Print" onClick={() => window.print()} />
+            <RibbonDivider />
+            <RibbonButton icon="refresh" label="Refresh" spinning={loading} onClick={() => fetchAccounts(true)} />
+            <RibbonButton icon="save" label="Settings" onClick={() => setSettingsOpen(true)} />
+          </Ribbon>
+        }
+      />
 
       <input ref={importRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ""; }} />
 
-      <div className="space-y-5 p-6">
-        {/* ============ KPI dashboard ============ */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-          <SummaryCard label="Total Accounts" value={counts.total} icon="ledger" hex="#64748b" idx={0} />
-          <SummaryCard label="Assets" value={counts.asset} icon="coins" hex={TYPE_HEX.asset} idx={1} />
-          <SummaryCard label="Liabilities" value={counts.liability} icon="book" hex={TYPE_HEX.liability} idx={2} />
-          <SummaryCard label="Equity" value={counts.equity} icon="scale" hex={TYPE_HEX.equity} idx={3} />
-          <SummaryCard label="Income" value={counts.income} icon="trending-up" hex={TYPE_HEX.income} idx={4} />
-          <SummaryCard label="Expense" value={counts.expense} icon="trending-down" hex={TYPE_HEX.expense} idx={5} />
-          <SummaryCard label="System Accounts" value={counts.system} icon="lock" hex="#8b5cf6" idx={6} />
-          <SummaryCard label="Inactive" value={counts.inactive} icon="alert" hex="#f59e0b" idx={7} />
-          <SummaryCard label="Recently Added" value={counts.recentAdded} icon="plus" hex="#06b6d4" idx={8} />
-          <SummaryCard label="Recently Updated" value={counts.recentUpdated} icon="edit" hex="#10b981" idx={9} />
-          <SummaryCard label="Pending Approval" value={counts.pending} icon="activity" hex="#f43f5e" idx={10} />
-          <SummaryCard label="Favourites" value={accounts.filter((a) => a.meta.favorite).length} icon="star" hex="#eab308" idx={11} />
-        </div>
-
-        {/* ============ Analytics ============ */}
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card dark:border-slate-800 dark:bg-slate-900">
-          <button onClick={() => setShowAnalytics((s) => !s)} className="flex w-full items-center justify-between px-5 py-3 text-left" aria-expanded={showAnalytics}>
-            <span className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-              <Icon name="chart-bar" className="h-4 w-4 text-brand" /> Analytics
-            </span>
-            <Icon name={showAnalytics ? "chevron-up" : "chevron-down"} className="h-4 w-4 text-slate-400" />
-          </button>
-          <AnimatePresence initial={false}>
-            {showAnalytics && (
-              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.25 }} className="overflow-hidden">
-                <div className="grid grid-cols-1 gap-4 border-t border-slate-100 p-5 dark:border-slate-800 md:grid-cols-2 xl:grid-cols-4">
-                  <AnalyticsTile title="Account Type Distribution">
-                    <Donut data={donutData} />
-                  </AnalyticsTile>
-                  <AnalyticsTile title="Assets vs Liabilities">
-                    <BarPair rows={[{ label: "Assets", value: money.asset, color: TYPE_HEX.asset }, { label: "Liabilities", value: money.liability, color: TYPE_HEX.liability }]} format={(n) => compactMoney(n)} />
-                    <NetLine label="Net worth" value={money.net} />
-                  </AnalyticsTile>
-                  <AnalyticsTile title="Income vs Expense">
-                    <BarPair rows={[{ label: "Income", value: money.income, color: TYPE_HEX.income }, { label: "Expense", value: money.expense, color: TYPE_HEX.expense }]} format={(n) => compactMoney(n)} />
-                    <NetLine label="Net margin" value={money.income - money.expense} />
-                  </AnalyticsTile>
-                  <AnalyticsTile title="Monthly Account Creation">
-                    <TrendBars points={trendPoints} labels={trendLabels} color="#2f6bff" />
-                  </AnalyticsTile>
-                  <AnalyticsTile title="Opening Balance Distribution">
-                    <BarPair rows={[{ label: "Assets", value: money.asset, color: TYPE_HEX.asset }, { label: "Liabilities", value: money.liability, color: TYPE_HEX.liability }, { label: "Income", value: money.income, color: TYPE_HEX.income }, { label: "Expense", value: money.expense, color: TYPE_HEX.expense }]} format={(n) => compactMoney(n)} />
-                  </AnalyticsTile>
-                  <AnalyticsTile title="Top Parent Groups">
-                    {topGroups.length ? <BarPair rows={topGroups} format={(n) => `${n}`} /> : <p className="text-xs text-slate-400">No groups yet.</p>}
-                  </AnalyticsTile>
-                  <AnalyticsTile title="Recently Modified">
-                    <ul className="space-y-2">
-                      {recentlyModified.map((a) => (
-                        <li key={a.id} className="flex items-center gap-2 text-xs">
-                          <span className={`flex h-6 w-6 flex-none items-center justify-center rounded-md ${TYPE_TONE[classify(a).key].soft} ${TYPE_TONE[classify(a).key].text}`}><Icon name={classify(a).icon} className="h-3 w-3" /></span>
-                          <button onClick={() => openDetails(a)} className="min-w-0 flex-1 truncate text-left font-medium text-slate-700 hover:text-brand dark:text-slate-200">{a.name}</button>
-                          <span className="flex-none text-slate-400">{formatDate(a.meta.updated_at)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </AnalyticsTile>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+      <div className="space-y-4 p-6">
+        {/* ============ Summary strip (compact, not a dashboard) ============ */}
+        <SummaryStrip>
+          <SummaryStat label="Total" value={counts.total} />
+          <StatDivider />
+          <SummaryStat label="Assets" value={counts.asset} hex={TYPE_HEX.asset} />
+          <SummaryStat label="Liabilities" value={counts.liability} hex={TYPE_HEX.liability} />
+          <SummaryStat label="Equity" value={counts.equity} hex={TYPE_HEX.equity} />
+          <SummaryStat label="Income" value={counts.income} hex={TYPE_HEX.income} />
+          <SummaryStat label="Expense" value={counts.expense} hex={TYPE_HEX.expense} />
+          <StatDivider />
+          <SummaryStat label="Inactive" value={counts.inactive} muted />
+          <SummaryStat label="System" value={counts.system} muted />
+        </SummaryStrip>
 
         {/* ============ Search + filters ============ */}
         <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-card dark:border-slate-800 dark:bg-slate-900">
-          <div ref={searchBoxRef} className="relative">
-            <Icon name="search" className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-            <input
-              ref={searchRef}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onFocus={() => setSearchOpen(true)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  commitSearch(search);
-                  setSearchOpen(false);
-                } else if (e.key === "Escape") setSearchOpen(false);
-              }}
-              placeholder="Search by code, name, group, description, currency, created by…"
-              aria-label="Search accounts"
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-12 pr-24 text-sm outline-none transition-colors focus:border-brand focus:bg-white focus:ring-2 focus:ring-brand/15 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:bg-slate-800"
-            />
-            <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1.5">
-              {search && (
-                <button onClick={() => setSearch("")} aria-label="Clear search" className="rounded p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
-                  <Icon name="x" className="h-4 w-4" />
-                </button>
-              )}
-              <kbd className="pointer-events-none rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-400 dark:border-slate-600 dark:bg-slate-900">Ctrl K</kbd>
-            </div>
-
-            <AnimatePresence>
-              {searchOpen && (search ? suggestions.length > 0 : recentSearches.length > 0) && (
-                <motion.div
-                  initial={{ opacity: 0, y: -6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.14 }}
-                  className="absolute left-0 right-0 top-full z-40 mt-2 rounded-xl border border-slate-200 bg-white p-1.5 shadow-float dark:border-slate-700 dark:bg-slate-800"
-                >
-                  {search ? (
-                    <>
-                      <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Suggestions</p>
-                      {suggestions.map((a) => (
-                        <button
-                          key={a.id}
-                          onMouseDown={(e) => { e.preventDefault(); openDetails(a); commitSearch(search); setSearchOpen(false); }}
-                          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-700"
-                        >
-                          <span className={`flex h-7 w-7 flex-none items-center justify-center rounded-lg ${TYPE_TONE[classify(a).key].soft} ${TYPE_TONE[classify(a).key].text}`}>
-                            <Icon name={classify(a).icon} className="h-3.5 w-3.5" />
-                          </span>
-                          <span className="min-w-0">
-                            <span className="block truncate font-medium text-slate-800 dark:text-slate-100">{highlight(a.name, search)}</span>
-                            <span className="block truncate font-mono text-xs text-slate-400">{highlight(a.code, search)}</span>
-                          </span>
-                        </button>
-                      ))}
-                    </>
-                  ) : (
-                    <>
-                      <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Recent searches</p>
-                      {recentSearches.map((r) => (
-                        <button key={r} onMouseDown={(e) => { e.preventDefault(); setSearch(r); setSearchOpen(false); }} className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700">
-                          <Icon name="refresh" className="h-3.5 w-3.5 text-slate-400" />
-                          {r}
-                        </button>
-                      ))}
-                    </>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+          <SearchBar
+            inputRef={searchRef}
+            value={search}
+            onChange={setSearch}
+            open={searchOpen}
+            onOpenChange={setSearchOpen}
+            onCommit={commitSearch}
+            placeholder="Search by code, name, group, description, currency, created by…"
+            ariaLabel="Search accounts"
+            dropdown={
+              (search ? suggestions.length > 0 : recentSearches.length > 0) &&
+              (search ? (
+                <>
+                  <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Suggestions</p>
+                  {suggestions.map((a) => (
+                    <button
+                      key={a.id}
+                      onMouseDown={(e) => { e.preventDefault(); openDetails(a); commitSearch(search); setSearchOpen(false); }}
+                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-700"
+                    >
+                      <span className={`flex h-7 w-7 flex-none items-center justify-center rounded-lg ${TYPE_TONE[classify(a).key].soft} ${TYPE_TONE[classify(a).key].text}`}>
+                        <Icon name={classify(a).icon} className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-slate-800 dark:text-slate-100">{highlightMatch(a.name, search)}</span>
+                        <span className="block truncate font-mono text-xs text-slate-400">{highlightMatch(a.code, search)}</span>
+                      </span>
+                    </button>
+                  ))}
+                </>
+              ) : (
+                <>
+                  <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Recent searches</p>
+                  {recentSearches.map((r) => (
+                    <button key={r} onMouseDown={(e) => { e.preventDefault(); setSearch(r); setSearchOpen(false); }} className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700">
+                      <Icon name="refresh" className="h-3.5 w-3.5 text-slate-400" />
+                      {r}
+                    </button>
+                  ))}
+                </>
+              ))
+            }
+          />
 
           {/* chips */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <FilterChip icon="tag" label="Type" value={fType ? BASE_TYPES.find((t) => t.value === fType)?.label ?? "" : ""} options={[{ value: "", label: "All types" }, ...BASE_TYPES.map((t) => ({ value: t.value, label: t.label }))]} onSelect={setFType} />
-            <FilterChip icon="layers" label="Group" value={fGroup} options={[{ value: "", label: "All groups" }, ...parentGroups.map((g) => ({ value: g, label: g }))]} onSelect={setFGroup} />
+            <FilterChip icon="layers" label="Parent Group" value={fGroup} options={[{ value: "", label: "All groups" }, ...parentGroups.map((g) => ({ value: g, label: g }))]} onSelect={setFGroup} />
             <FilterChip icon="activity" label="Status" value={fStatus ? STATUS_META[fStatus as GLStatus].label : ""} options={[{ value: "", label: "All statuses" }, { value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }, { value: "archived", label: "Archived" }]} onSelect={setFStatus} />
-            <FilterChip icon="coins" label="Currency" value={fCurrency} options={[{ value: "", label: "All currencies" }, ...currencies.map((c) => ({ value: c, label: c }))]} onSelect={setFCurrency} />
-            <FilterChip icon="scale" label="Balance" value={fNormal ? (fNormal === "debit" ? "Debit" : "Credit") : ""} options={[{ value: "", label: "Any" }, { value: "debit", label: "Debit" }, { value: "credit", label: "Credit" }]} onSelect={setFNormal} />
-            <FilterChip icon="edit" label="Posting" value={fPosting ? (fPosting === "yes" ? "Allowed" : "Blocked") : ""} options={YESNO} onSelect={setFPosting} />
-            <FilterChip icon="book" label="Control A/c" value={fControl ? (fControl === "yes" ? "Yes" : "No") : ""} options={YESNO} onSelect={setFControl} />
-            <FilterChip icon="lock" label="System" value={fSystem ? (fSystem === "yes" ? "Yes" : "No") : ""} options={YESNO} onSelect={setFSystem} />
-            <FilterChip icon="briefcase" label="Dept" value={fDept} options={[{ value: "", label: "All departments" }, ...departments.map((d) => ({ value: d, label: d }))]} onSelect={setFDept} />
-            <FilterChip icon="map-pin" label="Location" value={fLoc} options={[{ value: "", label: "All locations" }, ...locations.map((l) => ({ value: l, label: l }))]} onSelect={setFLoc} />
-            <FilterChip icon="hash" label="Cost Center" value={fCost} options={[{ value: "", label: "All cost centers" }, ...costCenters.map((c) => ({ value: c, label: c }))]} onSelect={setFCost} />
-            <FilterChip icon="calendar" label="Created" value={DATE_PRESETS.find((d) => d.value === fCreated && d.value)?.label ?? ""} options={DATE_PRESETS} onSelect={setFCreated} />
-            <FilterChip icon="calendar" label="Updated" value={DATE_PRESETS.find((d) => d.value === fUpdated && d.value)?.label ?? ""} options={DATE_PRESETS} onSelect={setFUpdated} />
-            <button onClick={() => setFavOnly((v) => !v)} className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${favOnly ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300" : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
-              <Icon name={favOnly ? "star-filled" : "star"} className="h-3.5 w-3.5" /> Favourites
-            </button>
+            <FilterChip icon="scale" label="Debit/Credit" value={fNormal ? (fNormal === "debit" ? "Debit" : "Credit") : ""} options={[{ value: "", label: "Any" }, { value: "debit", label: "Debit" }, { value: "credit", label: "Credit" }]} onSelect={setFNormal} />
+            <FilterChip icon="edit" label="Posting Allowed" value={fPosting ? (fPosting === "yes" ? "Allowed" : "Blocked") : ""} options={YESNO} onSelect={setFPosting} />
+            <FilterChip icon="lock" label="System Account" value={fSystem ? (fSystem === "yes" ? "Yes" : "No") : ""} options={YESNO} onSelect={setFSystem} />
 
             <div className="ml-auto flex items-center gap-2">
-              {activeFilterCount > 0 && (
-                <button onClick={clearFilters} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-rose-600 dark:text-slate-400">
-                  <Icon name="x" className="h-3.5 w-3.5" /> Reset ({activeFilterCount})
-                </button>
-              )}
+              <FilterResetButton count={activeFilterCount} onClick={clearFilters} />
               <Popover align="right" panelClass="w-64" button={(o) => <ChipBtn open={o} icon="save" label="Views" />}>
                 {() => <SavedViewsPanel views={views} onApply={applyView} onDelete={deleteView} onSave={saveView} />}
               </Popover>
@@ -1187,10 +991,8 @@ export default function GLMasterPage() {
         {/* ============ Bulk bar ============ */}
         <AnimatePresence>
           {selected.size > 0 && (
-            <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="flex flex-wrap items-center gap-2 rounded-xl border border-brand/30 bg-blue-50/70 px-4 py-2.5 text-sm dark:border-brand/30 dark:bg-brand/10">
-              <span className="font-semibold text-brand">{selected.size} selected</span>
-              <button onClick={() => setSelected(new Set())} className="text-slate-500 hover:text-slate-700 hover:underline dark:text-slate-400">Clear</button>
-              <div className="ml-auto flex flex-wrap items-center gap-1.5">
+            <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+              <BulkBar count={selected.size} onClear={() => setSelected(new Set())}>
                 <BulkBtn icon="check" label="Activate" onClick={() => bulkSetStatus("active")} />
                 <BulkBtn icon="alert" label="Deactivate" onClick={() => bulkSetStatus("inactive")} />
                 <BulkBtn icon="layers" label="Change Parent" onClick={() => { setParentChangeValue(""); setParentChangeOpen(true); }} />
@@ -1198,7 +1000,7 @@ export default function GLMasterPage() {
                 <BulkBtn icon="download" label="Export" onClick={() => exportCsv(selectedAccounts)} />
                 <BulkBtn icon="printer" label="Print" onClick={() => window.print()} />
                 <BulkBtn icon="trash" label="Delete" danger onClick={() => setBulkDeleteOpen(true)} />
-              </div>
+              </BulkBar>
             </motion.div>
           )}
         </AnimatePresence>
@@ -1232,7 +1034,7 @@ export default function GLMasterPage() {
                 </thead>
                 <tbody>
                   {loading ? (
-                    <SkeletonGrid cols={visibleCols.length} />
+                    <SkeletonRows cols={visibleCols.length} />
                   ) : loadError ? (
                     <tr><td colSpan={visibleCols.length + 3} className="py-20"><EmptyState variant="error" title="Couldn't load accounts" body={loadError} actionLabel="Retry" onAction={() => fetchAccounts(true)} /></td></tr>
                   ) : paged.length === 0 ? (
@@ -1258,7 +1060,7 @@ export default function GLMasterPage() {
               </table>
             </div>
             {!loading && filtered.length > 0 && (
-              <Pagination page={currentPage} totalPages={totalPages} pageSize={pageSize} setPageSize={setPageSize} setPage={setPage} total={filtered.length} />
+              <Pagination page={currentPage} totalPages={totalPages} pageSize={pageSize} pageSizes={PAGE_SIZES} setPageSize={setPageSize} setPage={setPage} total={filtered.length} itemLabel="accounts" />
             )}
           </div>
         ) : (
@@ -1377,7 +1179,8 @@ export default function GLMasterPage() {
         <button onClick={() => setParentChangeOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
         <button onClick={doBulkParent} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark">Apply</button>
       </>}>
-        <input value={parentChangeValue} onChange={(e) => setParentChangeValue(e.target.value)} list="pg-opts" placeholder="e.g. Current Assets (leave blank for Ungrouped)" className={`${inputClass} w-full`} />
+        <input value={parentChangeValue} onChange={(e) => setParentChangeValue(e.target.value)} list="bulk-pg-opts" placeholder="e.g. Current Assets (leave blank for Ungrouped)" className={`${inputClass} w-full`} />
+        <datalist id="bulk-pg-opts">{ALL_GROUPS.map((g) => <option key={g} value={g} />)}</datalist>
       </Modal>
 
       <Modal isOpen={confirmDiscard} title="Discard changes?" description="You have unsaved changes. Closing now will lose them." size="sm" icon={<span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-500/15"><Icon name="alert" className="h-5 w-5" /></span>} onClose={() => setConfirmDiscard(false)} footer={<>
@@ -1392,7 +1195,7 @@ export default function GLMasterPage() {
         <select value={bulkCurrency} onChange={(e) => setBulkCurrency(e.target.value)} className={`${inputClass} w-full`}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select>
       </Modal>
 
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} density={density} setDensity={setDensity} showAnalytics={showAnalytics} setShowAnalytics={setShowAnalytics} pageSize={pageSize} setPageSize={setPageSize} onResetColumns={resetColumns} />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} density={density} setDensity={setDensity} pageSize={pageSize} setPageSize={setPageSize} onResetColumns={resetColumns} />
       <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} accounts={paletteAccounts} onOpenAccount={(id) => { const a = accounts.find((x) => x.id === id); if (a) openDetails(a); }} />
@@ -1476,20 +1279,6 @@ function Cell({ a, col }: { a: EnrichedGLAccount; col: ColKey }) {
 /* =============================================================== *
  * Presentational helpers
  * =============================================================== */
-function highlight(text: string, q: string): React.ReactNode {
-  const query = q.trim();
-  if (!query) return text;
-  const i = text.toLowerCase().indexOf(query.toLowerCase());
-  if (i === -1) return text;
-  return (
-    <>
-      {text.slice(0, i)}
-      <mark className="rounded bg-amber-200/70 px-0.5 text-inherit dark:bg-amber-400/30">{text.slice(i, i + query.length)}</mark>
-      {text.slice(i + query.length)}
-    </>
-  );
-}
-
 function cellBg(sel: boolean, active: boolean, zebra: boolean) {
   if (sel) return "bg-blue-50/70 group-hover:bg-blue-50 dark:bg-brand/10";
   if (active) return "bg-slate-100/70 dark:bg-slate-800/60";
@@ -1526,25 +1315,15 @@ function AccountCell({ a, onFav, query = "" }: { a: EnrichedGLAccount; onFav: ()
       </span>
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="truncate font-semibold text-slate-900 dark:text-white">{highlight(a.name, query)}</span>
+          <span className="truncate font-semibold text-slate-900 dark:text-white">{highlightMatch(a.name, query)}</span>
           {a.meta.pinned && <Icon name="pin-filled" className="h-3 w-3 flex-none text-amber-400" />}
         </div>
         <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          <span className="font-mono">{highlight(a.code, query)}</span>
+          <span className="font-mono">{highlightMatch(a.code, query)}</span>
           {a.meta.description && <span className="max-w-[160px] truncate">· {a.meta.description}</span>}
         </div>
       </div>
     </div>
-  );
-}
-
-function HeaderSort({ label, info, align, onClick }: { label: string; info: { dir: "asc" | "desc"; order: number } | null; align?: "right"; onClick: (shift: boolean) => void }) {
-  return (
-    <button onClick={(e) => onClick(e.shiftKey)} title="Click to sort · Shift-click to add" className={`inline-flex items-center gap-1 hover:text-slate-900 dark:hover:text-white ${align === "right" ? "flex-row-reverse" : ""} ${info ? "text-slate-900 dark:text-white" : ""}`}>
-      {label}
-      {info ? <Icon name={info.dir === "asc" ? "arrow-up" : "arrow-down"} className="h-3.5 w-3.5 text-brand" /> : <Icon name="sort" className="h-3.5 w-3.5 text-slate-300 dark:text-slate-600" />}
-      {info && info.order > 0 && <span className="rounded bg-brand/15 px-1 text-[9px] font-bold text-brand">{info.order}</span>}
-    </button>
   );
 }
 
@@ -1573,47 +1352,6 @@ function RowActions({ a, api }: { a: EnrichedGLAccount; api: RowApi }) {
   );
 }
 
-function Pagination({ page, totalPages, pageSize, setPageSize, setPage, total }: { page: number; totalPages: number; pageSize: number; setPageSize: (n: number) => void; setPage: React.Dispatch<React.SetStateAction<number>>; total: number }) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:text-slate-400">
-      <div className="flex items-center gap-2">
-        <span>Rows</span>
-        <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} aria-label="Rows per page" className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm outline-none focus:border-brand dark:border-slate-700 dark:bg-slate-800">
-          {PAGE_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <span className="hidden sm:inline">· {total} accounts</span>
-      </div>
-      <div className="flex items-center gap-1">
-        <Pager disabled={page === 1} onClick={() => setPage(1)} label="First page" icon="chevrons-left" />
-        <Pager disabled={page === 1} onClick={() => setPage((p) => p - 1)} label="Previous page" icon="chevron-left" />
-        <span className="px-2 font-medium text-slate-700 dark:text-slate-200">{page} / {totalPages}</span>
-        <Pager disabled={page === totalPages} onClick={() => setPage((p) => p + 1)} label="Next page" icon="chevron-right" />
-        <Pager disabled={page === totalPages} onClick={() => setPage(totalPages)} label="Last page" icon="chevrons-right" />
-      </div>
-    </div>
-  );
-}
-function Pager({ disabled, onClick, label, icon }: { disabled: boolean; onClick: () => void; label: string; icon: string }) {
-  return <button disabled={disabled} onClick={onClick} aria-label={label} className="rounded-lg border border-slate-200 p-1.5 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><Icon name={icon} className="h-4 w-4" /></button>;
-}
-
-/* ---- ribbon ---- */
-function RibbonButton({ icon, label, shortcut, onClick, disabled, primary, spinning }: { icon: string; label: string; shortcut?: string; onClick: () => void; disabled?: boolean; primary?: boolean; spinning?: boolean }) {
-  return (
-    <button onClick={onClick} disabled={disabled} title={shortcut ? `${label} · ${shortcut}` : label} aria-label={label} className={`inline-flex flex-none items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40 ${primary ? "bg-brand text-white hover:bg-brand-dark shadow-sm" : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
-      <Icon name={icon} className={`h-4 w-4 ${spinning ? "animate-spin" : ""}`} />
-      <span className="hidden sm:inline">{label}</span>
-    </button>
-  );
-}
-function RibbonDivider() { return <span className="mx-1 h-5 w-px flex-none bg-slate-200 dark:bg-slate-700" />; }
-function BulkBtn({ icon, label, onClick, danger }: { icon: string; label: string; onClick: () => void; danger?: boolean }) {
-  return <button onClick={onClick} className={`inline-flex items-center gap-1.5 rounded-lg border bg-white px-3 py-1.5 font-medium transition-colors dark:bg-slate-800 ${danger ? "border-red-200 text-red-600 hover:bg-red-50 dark:border-red-500/30 dark:text-red-400" : "border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200"}`}><Icon name={icon} className="h-3.5 w-3.5" /> {label}</button>;
-}
-function ChipBtn({ open, icon, label }: { open: boolean; icon: string; label: string }) {
-  return <button className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${open ? "border-brand/40 bg-blue-50 text-brand dark:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}><Icon name={icon} className="h-3.5 w-3.5" /> {label}</button>;
-}
-
 function ViewToggle({ view, setView }: { view: ViewMode; setView: (v: ViewMode) => void }) {
   return (
     <div className="flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
@@ -1626,89 +1364,6 @@ function ViewToggle({ view, setView }: { view: ViewMode; setView: (v: ViewMode) 
     </div>
   );
 }
-function ThemeToggle() {
-  const [dark, setDark] = useState(false);
-  useEffect(() => setDark(document.documentElement.classList.contains("dark")), []);
-  const toggle = () => {
-    const next = !dark;
-    setDark(next);
-    document.documentElement.classList.toggle("dark", next);
-    localStorage.setItem("gl_theme", next ? "dark" : "light");
-  };
-  return <button onClick={toggle} aria-label="Toggle theme" className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><Icon name={dark ? "sun" : "moon"} className="h-[18px] w-[18px]" /></button>;
-}
-
-/* ---- summary card w/ sparkline ---- */
-function SummaryCard({ label, value, icon, hex, idx }: { label: string; value: number; icon: string; hex: string; idx: number }) {
-  const series = useMemo(() => pseudoSeries(label, 9, Math.max(3, value)), [label, value]);
-  const change = useMemo(() => {
-    const prev = series[series.length - 2] || 1;
-    const last = series[series.length - 1] || 1;
-    return ((last - prev) / prev) * 100;
-  }, [series]);
-  const up = change >= 0;
-  return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.04, type: "spring", stiffness: 240, damping: 22 }} whileHover={{ y: -3 }} className="glass rounded-2xl p-4 shadow-card ring-1 ring-slate-200/60 dark:ring-slate-700/60">
-      <div className="flex items-start justify-between">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: `${hex}1a`, color: hex }}><Icon name={icon} className="h-4 w-4" /></span>
-        <Sparkline points={series} color={hex} />
-      </div>
-      <AnimatedCounter value={value} className="mt-2 block text-2xl font-bold tabular-nums text-slate-900 dark:text-white" />
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
-        <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold ${up ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500 dark:text-rose-400"}`}>
-          <Icon name={up ? "trending-up" : "trending-down"} className="h-3 w-3" />
-          {Math.abs(change).toFixed(1)}%
-        </span>
-      </div>
-    </motion.div>
-  );
-}
-
-function AnalyticsTile({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</p>
-      {children}
-    </div>
-  );
-}
-function NetLine({ label, value }: { label: string; value: number }) {
-  const pos = value >= 0;
-  return (
-    <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-xs dark:border-slate-800">
-      <span className="text-slate-500 dark:text-slate-400">{label}</span>
-      <span className={`font-semibold tabular-nums ${pos ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500"}`}>{compactMoney(value)}</span>
-    </div>
-  );
-}
-
-function MenuItem({ icon, label, onClick, danger }: { icon: string; label: string; onClick: () => void; danger?: boolean }) {
-  return <button onClick={onClick} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${danger ? "text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10" : "text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"}`}><Icon name={icon} className="h-4 w-4 flex-none text-slate-400" /> {label}</button>;
-}
-
-/* ---- filter chip ---- */
-function FilterChip({ icon, label, value, options, onSelect }: { icon: string; label: string; value: string; options: { value: string; label: string }[]; onSelect: (v: string) => void }) {
-  const active = value !== "";
-  return (
-    <Popover panelClass="w-52" button={() => (
-      <button className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${active ? "border-brand/40 bg-blue-50 text-brand dark:border-brand/40 dark:bg-brand/10 dark:text-blue-300" : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
-        <Icon name={icon} className="h-3.5 w-3.5" /> {label}{active && <span className="max-w-[110px] truncate font-semibold">: {value}</span>}<Icon name="chevron-down" className="h-3 w-3 opacity-60" />
-      </button>
-    )}>
-      {(close) => (
-        <div className="max-h-64 overflow-y-auto scroll-thin">
-          {options.map((o) => (
-            <button key={o.value || "all"} onClick={() => { onSelect(o.value); close(); }} className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-700 ${value === o.value ? "font-semibold text-brand" : "text-slate-700 dark:text-slate-200"}`}>
-              <span className="truncate">{o.label}</span>{value === o.value && <Icon name="check" className="h-4 w-4 flex-none" />}
-            </button>
-          ))}
-        </div>
-      )}
-    </Popover>
-  );
-}
-
 function SavedViewsPanel({ views, onApply, onDelete, onSave }: { views: SavedView[]; onApply: (v: SavedView) => void; onDelete: (id: string) => void; onSave: (name: string) => void }) {
   const [name, setName] = useState("");
   return (
@@ -1752,52 +1407,6 @@ function ColumnsPanel({ order, setOrder, visible, setVisible, onReset }: { order
   );
 }
 
-/* ---- skeleton ---- */
-function SkeletonGrid({ cols }: { cols: number }) {
-  return (
-    <>
-      {Array.from({ length: 8 }).map((_, r) => (
-        <tr key={r} className="border-b border-slate-100 dark:border-slate-800/70">
-          <td className="px-4 py-3.5"><div className="h-4 w-4 rounded shimmer" /></td>
-          <td className="px-2 py-3"><div className="flex items-center gap-3"><div className="h-9 w-9 rounded-xl shimmer" /><div className="space-y-1.5"><div className="h-3.5 w-40 rounded shimmer" /><div className="h-2.5 w-24 rounded shimmer" /></div></div></td>
-          {Array.from({ length: cols }).map((__, c) => <td key={c} className="px-4 py-3.5"><div className="h-3.5 rounded shimmer" style={{ width: `${50 + ((r + c) % 4) * 12}%` }} /></td>)}
-          <td className="px-4 py-3.5"><div className="ml-auto h-4 w-6 rounded shimmer" /></td>
-        </tr>
-      ))}
-    </>
-  );
-}
-
-/* ---- empty state ---- */
-function EmptyState({ variant, title, body, actionLabel, onAction }: { variant: "empty" | "search" | "error"; title: string; body: string; actionLabel: string; onAction: () => void }) {
-  return (
-    <div className="mx-auto flex max-w-sm flex-col items-center px-6 text-center">
-      <LedgerArt variant={variant} />
-      <h3 className="mt-5 text-base font-semibold text-slate-900 dark:text-white">{title}</h3>
-      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{body}</p>
-      <button onClick={onAction} className="mt-5 inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-brand-dark hover:shadow-md">
-        {variant === "empty" && <Icon name="plus" className="h-4 w-4" />}{actionLabel}
-      </button>
-    </div>
-  );
-}
-function LedgerArt({ variant }: { variant: "empty" | "search" | "error" }) {
-  const accent = variant === "error" ? "#f43f5e" : variant === "search" ? "#f59e0b" : "#2f6bff";
-  return (
-    <div className="relative">
-      <div className="absolute inset-0 -z-10 mx-auto h-24 w-24 rounded-full blur-2xl" style={{ background: `${accent}22` }} />
-      <svg width="120" height="96" viewBox="0 0 120 96" fill="none">
-        <rect x="20" y="14" width="80" height="68" rx="8" className="fill-white stroke-slate-200 dark:fill-slate-800 dark:stroke-slate-700" strokeWidth="2" />
-        <rect x="20" y="14" width="80" height="18" rx="8" fill={accent} opacity="0.14" />
-        <rect x="32" y="42" width="26" height="5" rx="2.5" className="fill-slate-200 dark:fill-slate-600" />
-        <rect x="32" y="54" width="46" height="5" rx="2.5" className="fill-slate-200 dark:fill-slate-600" />
-        <rect x="32" y="66" width="36" height="5" rx="2.5" className="fill-slate-200 dark:fill-slate-600" />
-        <circle cx="86" cy="70" r="16" fill={accent} opacity="0.12" />
-        <path d={variant === "error" ? "M86 64v6m0 4h.01" : variant === "search" ? "M92 76l-4-4m1-3a5 5 0 10-10 0 5 5 0 0010 0z" : "M80 70l4 4 8-8"} stroke={accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      </svg>
-    </div>
-  );
-}
 
 /* =============================================================== *
  * Tree / hierarchy view
@@ -1907,8 +1516,8 @@ function TreeRow({ a, query, onOpen, api }: { a: EnrichedGLAccount; query: strin
   return (
     <div onClick={() => onOpen(a)} onContextMenu={(e) => { e.preventDefault(); api.setCtx(e.clientX, e.clientY, a.id); }} className="group flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/70">
       <button onClick={(e) => { e.stopPropagation(); api.toggleFavorite(a); }} className="flex-none rounded p-0.5" aria-label="Favourite"><Icon name={a.meta.favorite ? "star-filled" : "star"} className={`h-3.5 w-3.5 ${a.meta.favorite ? "text-amber-400" : "text-slate-300"}`} /></button>
-      <span className="font-mono text-xs font-semibold text-slate-500 dark:text-slate-400">{highlight(a.code, query)}</span>
-      <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 dark:text-slate-100">{highlight(a.name, query)}</span>
+      <span className="font-mono text-xs font-semibold text-slate-500 dark:text-slate-400">{highlightMatch(a.code, query)}</span>
+      <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 dark:text-slate-100">{highlightMatch(a.name, query)}</span>
       <NormalBalancePill nb={a.meta.normal_balance} />
       <span className="hidden items-center gap-1.5 md:inline-flex"><span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} /><span className="text-xs text-slate-500">{s.label}</span></span>
       <span className="hidden w-28 text-right font-mono text-xs text-slate-600 sm:block dark:text-slate-300">{formatMoney(a.meta.opening_balance, a.meta.currency)}</span>
@@ -1920,8 +1529,8 @@ function TreeRow({ a, query, onOpen, api }: { a: EnrichedGLAccount; query: strin
 /* =============================================================== *
  * Settings + shortcuts
  * =============================================================== */
-function SettingsModal({ open, onClose, density, setDensity, showAnalytics, setShowAnalytics, pageSize, setPageSize, onResetColumns }: {
-  open: boolean; onClose: () => void; density: Density; setDensity: (d: Density) => void; showAnalytics: boolean; setShowAnalytics: (b: boolean) => void; pageSize: number; setPageSize: (n: number) => void; onResetColumns: () => void;
+function SettingsModal({ open, onClose, density, setDensity, pageSize, setPageSize, onResetColumns }: {
+  open: boolean; onClose: () => void; density: Density; setDensity: (d: Density) => void; pageSize: number; setPageSize: (n: number) => void; onResetColumns: () => void;
 }) {
   return (
     <Modal isOpen={open} title="Grid settings" description="Personalise how the accounts grid behaves." size="md" onClose={onClose} icon={<span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800"><Icon name="save" className="h-5 w-5" /></span>}>
@@ -1933,10 +1542,6 @@ function SettingsModal({ open, onClose, density, setDensity, showAnalytics, setS
               <button key={d} onClick={() => setDensity(d)} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium capitalize transition-colors ${density === d ? "border-brand bg-blue-50 text-brand dark:bg-brand/10" : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}>{d}</button>
             ))}
           </div>
-        </div>
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Show analytics</p>
-          <button onClick={() => setShowAnalytics(!showAnalytics)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${showAnalytics ? "bg-brand" : "bg-slate-300 dark:bg-slate-600"}`}><span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${showAnalytics ? "translate-x-4" : "translate-x-0.5"}`} /></button>
         </div>
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Default rows per page</p>
@@ -2002,7 +1607,7 @@ function AddEditPanel({ form, setForm, errors, editing, initialForm, dirty, savi
             </div>
           </Field>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Parent Group" changed={changed("parent_group")}><input value={form.parent_group} onChange={(e) => set("parent_group", e.target.value)} placeholder="Current Assets" list="pg-opts" className={`${inputClass} w-full`} /></Field>
+            <Field label="Parent Group" changed={changed("parent_group")}><ParentGroupSelect type={form.type} value={form.parent_group} onChange={(v) => set("parent_group", v)} /></Field>
             <Field label="Normal Balance" changed={changed("normal_balance")}><select value={form.normal_balance} onChange={(e) => set("normal_balance", e.target.value as "debit" | "credit")} className={`${inputClass} w-full`}><option value="debit">Debit (Dr)</option><option value="credit">Credit (Cr)</option></select></Field>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -2033,7 +1638,6 @@ function AddEditPanel({ form, setForm, errors, editing, initialForm, dirty, savi
           </div>
         </Section>
         <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-400 dark:bg-slate-800">Code, name, type &amp; parent group save to the ledger. All other attributes are kept on this device for the demo.</p>
-        <datalist id="pg-opts">{["Current Assets", "Fixed Assets", "Current Liabilities", "Equity", "Revenue", "Direct Expenses", "Indirect Expenses"].map((g) => <option key={g} value={g} />)}</datalist>
       </div>
       <div className="flex items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4 dark:border-slate-800 dark:bg-slate-900/60">
         <span className="text-xs text-slate-400">{dirty ? "Unsaved changes" : ""}</span>
@@ -2045,24 +1649,32 @@ function AddEditPanel({ form, setForm, errors, editing, initialForm, dirty, savi
     </div>
   );
 }
-function Section({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
-  return <section className="space-y-3"><h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400"><Icon name={icon} className="h-3.5 w-3.5" /> {title}</h3>{children}</section>;
-}
-function Field({ label, required, error, changed, children }: { label: string; required?: boolean; error?: string; changed?: boolean; children: React.ReactNode }) {
+
+/* Tally-style Parent Group selector — options scoped to the account's nature, with a
+   "Custom group…" escape hatch for a name not on the standard list. */
+function ParentGroupSelect({ type, value, onChange }: { type: GLAccount["type"]; value: string; onChange: (v: string) => void }) {
+  const options = GROUPS_BY_TYPE[type];
+  const isCustom = value !== "" && !options.includes(value);
+  const [customMode, setCustomMode] = useState(isCustom);
+
+  if (customMode) {
+    return (
+      <div className="flex gap-1.5">
+        <input autoFocus value={value} onChange={(e) => onChange(e.target.value)} placeholder="Enter a group name" className={`${inputClass} w-full`} />
+        <button type="button" onClick={() => { setCustomMode(false); onChange(""); }} title="Choose from standard groups" className="flex-none rounded-lg border border-slate-200 px-2.5 text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"><Icon name="x" className="h-4 w-4" /></button>
+      </div>
+    );
+  }
   return (
-    <label className="block">
-      <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">{label}{required && <span className="text-red-500">*</span>}{changed && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">Changed</span>}</span>
-      {children}
-      {error && <span className="mt-1 block text-xs font-medium text-red-600 dark:text-red-400">{error}</span>}
-    </label>
-  );
-}
-function Toggle({ label, desc, checked, onChange }: { label: string; desc: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button type="button" onClick={() => onChange(!checked)} className="flex w-full items-start justify-between gap-4 rounded-lg px-1 py-2 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800">
-      <span><span className="block text-sm font-medium text-slate-800 dark:text-slate-100">{label}</span><span className="mt-0.5 block text-xs text-slate-400">{desc}</span></span>
-      <span className={`relative mt-0.5 inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors ${checked ? "bg-brand" : "bg-slate-300 dark:bg-slate-600"}`}><motion.span layout className={`inline-block h-4 w-4 rounded-full bg-white shadow ${checked ? "translate-x-4" : "translate-x-0.5"}`} transition={{ type: "spring", stiffness: 500, damping: 30 }} /></span>
-    </button>
+    <select
+      value={value}
+      onChange={(e) => { if (e.target.value === "__custom__") setCustomMode(true); else onChange(e.target.value); }}
+      className={`${inputClass} w-full`}
+    >
+      <option value="">— No parent group —</option>
+      {options.map((g) => <option key={g} value={g}>{g}</option>)}
+      <option value="__custom__">+ Custom group…</option>
+    </select>
   );
 }
 
