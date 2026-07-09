@@ -12,7 +12,6 @@ import { signOut } from "@/lib/auth";
   In is the front-door gate, not an in-app page, so it isn't listed here — use
   the Sign out button in the footer instead.
 */
-
 type NavItem = { href: string; label: string; icon: string; built: boolean; badge?: number };
 type NavGroup = { title: string; items: NavItem[] };
 
@@ -27,7 +26,7 @@ const GROUPS: NavGroup[] = [
   {
     title: "Masters",
     items: [
-      { href: "/masters/customers", label: "Customers", icon: "users", built: false },
+      { href: "/masters/customers", label: "Customers", icon: "users", built: true },
       { href: "/masters/gl", label: "GL Accounts", icon: "bank", built: true },
     ],
   },
