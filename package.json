@@ -22,7 +22,12 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^11.18.2",
+<<<<<<< HEAD
     "lucide-react": "^1.23.0",
+=======
+    "lucide-react": "^0.451.0",
+    "recharts": "^2.13.3",
+>>>>>>> 18f878aab18e469e4ff7f534efdc9e6186267252
     "next": "14.2.35",
     "react": "18.3.1",
     "react-dom": "18.3.1",

@@ -9,8 +9,110 @@
   color-scheme: dark;
 }
 
+@layer base {
+  *:focus-visible {
+    outline: none;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    @apply transition duration-200 ease-[cubic-bezier(.2,.8,.2,1)];
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    box-shadow: 0 0 0 4px rgba(47, 107, 255, 0.15);
+  }
+}
+
+html {
+  background:
+    radial-gradient(circle at top left, rgba(47, 107, 255, 0.12), transparent 30%),
+    linear-gradient(180deg, #f8fbff 0%, #eef4ff 40%, #f8fafc 100%);
+}
+
 body {
-  @apply bg-slate-50 text-slate-800 antialiased;
+  @apply min-h-screen bg-transparent text-slate-800 antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 23, 42, 0.25) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.2);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes soft-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@layer utilities {
+  .shimmer {
+    background-image: linear-gradient(90deg, rgba(226, 232, 240, 0.9) 0%, rgba(241, 245, 249, 1) 50%, rgba(226, 232, 240, 0.9) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.35s ease-in-out infinite;
+  }
+
+  .soft-fade-in {
+    animation: soft-fade-in 320ms ease-out both;
+  }
+
+  .dash-spark {
+    stroke-dasharray: 180;
+    stroke-dashoffset: 180;
+    animation: soft-fade-in 240ms ease-out both, dash-reveal 900ms ease-out 100ms forwards;
+  }
+
+  @keyframes dash-reveal {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 .dark body {
   @apply bg-slate-950 text-slate-200;
@@ -62,3 +164,10 @@ body {
 
 /* Frozen-column helper: subtle separating shadow */
 .freeze-shadow { box-shadow: 8px 0 12px -10px rgba(16,24,40,0.25); }
+
+/* Printable report pages: hide the sidebar/controls and let content flow across pages */
+@media print {
+  nav, .no-print { display: none !important; }
+  html, body { height: auto !important; overflow: visible !important; }
+  main { overflow: visible !important; }
+}

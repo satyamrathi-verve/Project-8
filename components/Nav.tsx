@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
+<<<<<<< HEAD
 import { logout } from "@/lib/auth";
 
 /*
@@ -11,8 +12,16 @@ import { logout } from "@/lib/auth";
   and notification badges. Sign In, Customer Master, GL Accounts and AR Followup
   are built; the rest show as the roadmap the team fills in (flip `built` + set
   `href` when a screen lands).
-*/
+=======
+import { signOut } from "@/lib/auth";
 
+/*
+  Left sidebar — collapsible, icon-led, with section groups, an active "glow",
+  and notification badges. Flip `built` + set `href` when a screen lands. Sign
+  In is the front-door gate, not an in-app page, so it isn't listed here — use
+  the Sign out button in the footer instead.
+>>>>>>> 18f878aab18e469e4ff7f534efdc9e6186267252
+*/
 type NavItem = { href: string; label: string; icon: string; built: boolean; badge?: number };
 type NavGroup = { title: string; items: NavItem[] };
 
@@ -21,7 +30,7 @@ const GROUPS: NavGroup[] = [
     title: "Overview",
     items: [
       { href: "/", label: "Home", icon: "home", built: true },
-      { href: "/dashboard", label: "Dashboard", icon: "grid", built: false },
+      { href: "/dashboard", label: "Dashboard", icon: "grid", built: true },
     ],
   },
   {
@@ -34,24 +43,34 @@ const GROUPS: NavGroup[] = [
   {
     title: "Transactions",
     items: [
+<<<<<<< HEAD
       { href: "/invoices", label: "Sales Invoices", icon: "receipt", built: false },
       { href: "/receipts", label: "Receipt Entry", icon: "wallet", built: false },
       { href: "/upload", label: "Upload Report", icon: "upload", built: false },
       { href: "/reminders", label: "AR Followup", icon: "bell", built: true },
+=======
+      { href: "/invoices", label: "Sales Invoices", icon: "receipt", built: true },
+      { href: "/receipts", label: "Receipt Entry", icon: "wallet", built: true },
+      { href: "/upload", label: "Upload Report", icon: "upload", built: true },
+      { href: "/reminders", label: "AR Followup", icon: "bell", built: false, badge: 3 },
+>>>>>>> 18f878aab18e469e4ff7f534efdc9e6186267252
     ],
   },
   {
     title: "Reports",
     items: [
-      { href: "/reports/statement", label: "Customer Statement", icon: "file-text", built: false },
-      { href: "/reports/ageing", label: "AR Ageing", icon: "scale", built: false },
+      { href: "/reports/statement", label: "Customer Statement", icon: "file-text", built: true },
+      { href: "/reports/ageing", label: "AR Ageing", icon: "scale", built: true },
       { href: "/cashflow", label: "Cashflow", icon: "trending-up", built: false },
     ],
   },
+<<<<<<< HEAD
   {
     title: "Account",
     items: [{ href: "/signin", label: "Sign In", icon: "lock", built: true }],
   },
+=======
+>>>>>>> 18f878aab18e469e4ff7f534efdc9e6186267252
 ];
 
 export function Nav() {
@@ -73,16 +92,21 @@ export function Nav() {
     });
   };
 
+<<<<<<< HEAD
   if (pathname === "/signin") return null;
 
   function handleSignOut() {
     logout();
+=======
+  function handleSignOut() {
+    signOut();
+>>>>>>> 18f878aab18e469e4ff7f534efdc9e6186267252
     router.push("/signin");
   }
 
   return (
     <nav
-      className={`relative flex h-full flex-col border-r border-slate-200 bg-white transition-[width] duration-300 ease-out dark:border-slate-800 dark:bg-slate-900 ${
+      className={`relative flex h-full flex-col border-r border-slate-200 bg-white transition-[width] duration-300 ease-out dark:border-slate-800 dark:bg-slate-900 print:hidden ${
         collapsed ? "w-[76px]" : "w-64"
       } ${ready ? "" : "duration-0"}`}
     >
@@ -177,6 +201,7 @@ export function Nav() {
       </div>
 
       {/* Sign out */}
+<<<<<<< HEAD
       <div className="border-t border-slate-100 px-3 pt-3 dark:border-slate-800">
         <button
           onClick={handleSignOut}
@@ -184,6 +209,15 @@ export function Nav() {
           title={collapsed ? "Sign out" : undefined}
         >
           <Icon name="log-out" className="h-[18px] w-[18px] flex-none" />
+=======
+      <div className="border-t border-slate-100 p-3 dark:border-slate-800">
+        <button
+          onClick={handleSignOut}
+          title={collapsed ? "Sign out" : undefined}
+          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+        >
+          <Icon name="lock" className="h-[18px] w-[18px] flex-none" />
+>>>>>>> 18f878aab18e469e4ff7f534efdc9e6186267252
           {!collapsed && <span>Sign out</span>}
         </button>
       </div>
