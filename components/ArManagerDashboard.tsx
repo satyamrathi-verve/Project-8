@@ -141,6 +141,12 @@ function daysBetween(a: Date, b: Date) {
   return Math.floor((b.getTime() - a.getTime()) / (24 * 60 * 60 * 1000));
 }
 
+function addDaysISO(date: Date, days: number): string {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function formatCompactCurrency(amount: number) {
   if (amount >= 100000) {
     const lakhs = amount / 100000;
@@ -992,13 +998,53 @@ export function ArManagerDashboard({ title = "AR Manager Dashboard" }: { title?:
   const pagedInvoices = filteredInvoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
 
-  const healthSegments = customerRisks.reduce<Record<string, { count: number; outstanding: number }>>((acc, row) => {
-    const key = row.segment;
-    acc[key] ??= { count: 0, outstanding: 0 };
-    acc[key].count += 1;
-    acc[key].outstanding += row.outstanding;
-    return acc;
-  }, {});
+  const top5ByOutstanding = [...customerRisks].sort((a, b) => b.outstanding - a.outstanding).slice(0, 5);
+  const top5OverdueInvoices = [...overdueInvoices].sort((a, b) => b.outstanding - a.outstanding).slice(0, 5);
+  const dueNext7Days = invoiceRows
+    .filter((invoice) => invoice.outstanding > 0 && parseDate(invoice.due_date) >= today && daysBetween(today, parseDate(invoice.due_date)) <= 7)
+    .sort((a, b) => parseDate(a.due_date).getTime() - parseDate(b.due_date).getTime())
+    .slice(0, 5);
+
+  const customerTurnover = useMemo(() => {
+    const map = new Map<string, { customer: Customer; totalInvoiced: number; outstanding: number; collected: number }>();
+    invoiceRows.forEach((invoice) => {
+      if (!invoice.customer) return;
+      const existing = map.get(invoice.customer_id) ?? { customer: invoice.customer, totalInvoiced: 0, outstanding: 0, collected: 0 };
+      existing.totalInvoiced += invoice.total;
+      existing.outstanding += invoice.outstanding;
+      existing.collected += invoice.allocated;
+      map.set(invoice.customer_id, existing);
+    });
+    const last6Months = shiftMonthsBack(6);
+    return Array.from(map.values())
+      .sort((a, b) => b.totalInvoiced - a.totalInvoiced)
+      .slice(0, 5)
+      .map((row) => ({
+        ...row,
+        collectionPct: row.totalInvoiced > 0 ? (row.collected / row.totalInvoiced) * 100 : 0,
+        trend: last6Months.map((monthDate) => {
+          const key = monthKey(monthDate);
+          return receipts
+            .filter((receipt) => receipt.customer_id === row.customer.id && monthKey(parseDate(receipt.receipt_date)) === key)
+            .reduce((sum, receipt) => sum + receipt.amount, 0);
+        }),
+      }));
+  }, [invoiceRows, receipts]);
+
+  const lastFollowupByInvoice = new Map<string, string>();
+  reminders.forEach((reminder) => {
+    if (!reminder.invoice_id) return;
+    const existing = lastFollowupByInvoice.get(reminder.invoice_id);
+    if (!existing || parseDate(reminder.sent_at) > parseDate(existing)) {
+      lastFollowupByInvoice.set(reminder.invoice_id, reminder.sent_at);
+    }
+  });
+  const collectionProbabilityByCustomer = new Map(customerRisks.map((row) => [row.customer.id, row.collectionProbability]));
+  /*
+    There's no follow-up scheduling table, so "next follow-up" is a suggested
+    cadence derived from priority rather than a real stored appointment.
+  */
+  const nextFollowupCadenceDays: Record<InvoiceRow["priority"], number> = { Critical: 1, High: 2, Medium: 4, Low: 7 };
 
   const notificationItems: ActivityRow[] = [
     ...invoicesNeedingAttention.slice(0, 3).map((invoice) => ({
@@ -1160,6 +1206,24 @@ export function ArManagerDashboard({ title = "AR Manager Dashboard" }: { title?:
           )}
         </div>
 
+        {!loading && (
+          <Card title="Quick Actions" subtitle="Always-visible command center" icon={Plus}>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              {actionItems.map((item) => (
+                <button
+                  key={item.label}
+                  className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-medium text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+                >
+                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-2xl bg-slate-950 text-white">
+                    <item.icon className="h-4 w-4" />
+                  </span>
+                  <span className="truncate">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </Card>
+        )}
+
         {loading ? (
           <DashboardSkeleton />
         ) : (
@@ -1188,15 +1252,33 @@ export function ArManagerDashboard({ title = "AR Manager Dashboard" }: { title?:
               <Card title="Monthly Collections" subtitle="Cash collected by month" icon={IndianRupee}>
                 <CollectionsColumnChart data={collectionTrend} color="#2f6bff" />
               </Card>
-              <Card title="Customer Payment Trend" subtitle="Monthly inflows by customer payment rhythm" icon={Activity}>
-                <TrendLineChart
-                  data={collectionTrend.map((point, index) => ({
-                    label: point.label,
-                    value: point.value + (monthlyTrend[index] ?? 0),
-                    value2: point.value,
-                  }))}
-                  secondaryKey="value2"
-                />
+              <Card title="Top 5 Customers by Turnover" subtitle="Highest invoiced value, with collection health and a 6-month trend" icon={Users}>
+                <div className="space-y-2">
+                  {customerTurnover.map((row) => (
+                    <div key={row.customer.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-slate-950">{row.customer.name}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {formatCompactCurrency(row.totalInvoiced)} invoiced · {formatCompactCurrency(row.outstanding)} outstanding
+                        </p>
+                      </div>
+                      <div className="flex flex-none items-center gap-3">
+                        <svg width="72" height="24" viewBox="0 0 72 24" className="overflow-visible">
+                          <polyline
+                            fill="none"
+                            stroke="#2f6bff"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            points={buildSparkline(row.trend, 72, 24, 3)}
+                          />
+                        </svg>
+                        <p className="w-12 text-right text-sm font-semibold text-slate-950">{pct(row.collectionPct)}</p>
+                      </div>
+                    </div>
+                  ))}
+                  {customerTurnover.length === 0 && <p className="text-sm text-slate-400">No invoiced customers yet.</p>}
+                </div>
               </Card>
             </div>
 
@@ -1236,6 +1318,27 @@ export function ArManagerDashboard({ title = "AR Manager Dashboard" }: { title?:
                         <p className={cn("text-xs", selectedInvoiceId === invoice.id ? "text-white/65" : "text-slate-500")}>
                           {formatCompactCurrency(invoice.allocated)} collected
                         </p>
+                      </div>
+                    </div>
+                    <div
+                      className={cn(
+                        "grid grid-cols-3 gap-2 border-t pt-2 text-[11px]",
+                        selectedInvoiceId === invoice.id ? "border-white/15" : "border-slate-100"
+                      )}
+                    >
+                      <div>
+                        <p className={cn("uppercase tracking-[0.15em]", selectedInvoiceId === invoice.id ? "text-white/50" : "text-slate-400")}>Last Follow-up</p>
+                        <p className="mt-0.5 font-semibold">
+                          {lastFollowupByInvoice.has(invoice.id) ? formatDate(lastFollowupByInvoice.get(invoice.id)!) : "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className={cn("uppercase tracking-[0.15em]", selectedInvoiceId === invoice.id ? "text-white/50" : "text-slate-400")}>Next Follow-up</p>
+                        <p className="mt-0.5 font-semibold">{formatDate(addDaysISO(today, nextFollowupCadenceDays[invoice.priority]))}</p>
+                      </div>
+                      <div>
+                        <p className={cn("uppercase tracking-[0.15em]", selectedInvoiceId === invoice.id ? "text-white/50" : "text-slate-400")}>Collection Prob.</p>
+                        <p className="mt-0.5 font-semibold">{pct(collectionProbabilityByCustomer.get(invoice.customer_id) ?? 70)}</p>
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs uppercase tracking-[0.2em]">
@@ -1517,6 +1620,48 @@ export function ArManagerDashboard({ title = "AR Manager Dashboard" }: { title?:
               </div>
             </Card>
 
+            <Card title="Top 5 Customers by Outstanding" subtitle="Highest exposure right now" icon={Wallet}>
+              <div className="space-y-2">
+                {top5ByOutstanding.map((row) => (
+                  <div key={row.customer.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-white px-3 py-2">
+                    <p className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">{row.customer.name}</p>
+                    <p className="flex-none text-sm font-semibold text-slate-950">{formatCompactCurrency(row.outstanding)}</p>
+                  </div>
+                ))}
+                {top5ByOutstanding.length === 0 && <p className="text-sm text-slate-400">No outstanding balances.</p>}
+              </div>
+            </Card>
+
+            <Card title="Top 5 Largest Overdue Invoices" subtitle="Biggest overdue exposure" icon={AlertTriangle}>
+              <div className="space-y-2">
+                {top5OverdueInvoices.map((invoice) => (
+                  <div key={invoice.id} className="flex items-center justify-between gap-3 rounded-xl border border-rose-100 bg-rose-50/60 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-rose-950">{invoice.invoice_no}</p>
+                      <p className="truncate text-xs text-rose-600">{invoice.customer?.name ?? "Unknown customer"} · {invoice.daysOverdue}d overdue</p>
+                    </div>
+                    <p className="flex-none text-sm font-semibold text-rose-950">{formatCompactCurrency(invoice.outstanding)}</p>
+                  </div>
+                ))}
+                {top5OverdueInvoices.length === 0 && <p className="text-sm text-slate-400">No overdue invoices — nice work.</p>}
+              </div>
+            </Card>
+
+            <Card title="Due in Next 7 Days" subtitle="Upcoming expected collections" icon={Clock3}>
+              <div className="space-y-2">
+                {dueNext7Days.map((invoice) => (
+                  <div key={invoice.id} className="flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/50 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-slate-900">{invoice.invoice_no}</p>
+                      <p className="truncate text-xs text-slate-500">{invoice.customer?.name ?? "Unknown customer"} · Due {formatDate(invoice.due_date)}</p>
+                    </div>
+                    <p className="flex-none text-sm font-semibold text-slate-950">{formatCompactCurrency(invoice.outstanding)}</p>
+                  </div>
+                ))}
+                {dueNext7Days.length === 0 && <p className="text-sm text-slate-400">Nothing due in the next 7 days.</p>}
+              </div>
+            </Card>
+
             <Card title="Smart Insights" subtitle="AI-style business commentary" icon={BrainCircuit}>
               <div className="space-y-3">
                 {smartInsights.map((insight) => (
@@ -1605,53 +1750,6 @@ export function ArManagerDashboard({ title = "AR Manager Dashboard" }: { title?:
                       <p className="text-xs text-slate-500">{formatCompactCurrency(row.amount)}</p>
                     </div>
                   </div>
-                ))}
-              </div>
-            </Card>
-
-            <Card title="Invoice Aging Summary" subtitle="Overview by bucket" icon={Files}>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                {agingBuckets.map((bucket) => (
-                  <div key={bucket.label} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
-                    <p className="text-xs uppercase tracking-[0.24em] text-slate-400">{bucket.label}</p>
-                    <p className="mt-1 text-lg font-semibold text-slate-950">{formatCompactCurrency(bucket.value)}</p>
-                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
-                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, (bucket.value / Math.max(totalOutstanding, 1)) * 100)}%`, background: bucket.color }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            <Card title="Customer Health Score" subtitle="Segment counts and exposure" icon={BadgeCheck}>
-              <div className="space-y-3">
-                {["Excellent", "Good", "Average", "Poor", "High Risk"].map((segment) => {
-                  const summary = healthSegments[segment] ?? { count: 0, outstanding: 0 };
-                  return (
-                    <div key={segment} className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white p-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-950">{segment}</p>
-                        <p className="mt-1 text-xs text-slate-500">{summary.count} customers · {formatCompactCurrency(summary.outstanding)} outstanding</p>
-                      </div>
-                      <p className="text-sm font-semibold text-slate-700">{pct((summary.outstanding / Math.max(totalOutstanding, 1)) * 100)}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
-
-            <Card title="Quick Actions" subtitle="Always-visible command center" icon={Plus}>
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-                {actionItems.map((item) => (
-                  <button
-                    key={item.label}
-                    className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-medium text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-                  >
-                    <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-950 text-white">
-                      <item.icon className="h-4 w-4" />
-                    </span>
-                    <span>{item.label}</span>
-                  </button>
                 ))}
               </div>
             </Card>
